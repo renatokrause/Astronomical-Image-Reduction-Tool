@@ -1,1 +1,5 @@
 EricBK26-Reducao_Imagens_Astronomicas/
+__pycache__/
+*.py[cod]
+.venv/
+output/
