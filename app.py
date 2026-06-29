@@ -147,9 +147,8 @@ class ReductionApp(tk.Tk):
             return
 
         bias_count = len(inventory.bias)
-        for index, (band, (flat_count, object_count)) in enumerate(inventory.counts_by_filter().items()):
-            bias_value = bias_count if index == 0 else ""
-            self.tree.item(band, values=(bias_value, flat_count, object_count))
+        for band, (flat_count, object_count) in inventory.counts_by_filter().items():
+            self.tree.item(band, values=(bias_count, flat_count, object_count))
 
         self.status.set(
             f"Automatic scan complete: {bias_count} bias file(s). "
@@ -187,8 +186,7 @@ class ReductionApp(tk.Tk):
             self.set_status("Processing bias, flats, alignment and RGB composition...")
             result = run_reduction(paths=paths, object_name=object_name)
 
-            caption = f"Processed in Python\nObject: {object_name}"
-            save_rgb_image(result.rgb, result.output_file, f"RGB Image - {object_name}", caption)
+            save_rgb_image(result.rgb, result.output_file, f"RGB Image - {object_name}")
 
             self.set_status(f"Image saved to: {result.output_file}")
             self.show_info("Processing complete", f"Image saved to:\n{result.output_file}")
