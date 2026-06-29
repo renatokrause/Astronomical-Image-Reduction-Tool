@@ -225,6 +225,7 @@ def run_reduction(
     q_value: float = 8,
     alignment_mode: str = ALIGNMENT_AUTOMATIC,
     progress_callback: ProgressCallback | None = None,
+    object_file_selection: dict[str, list[Path]] | None = None,
 ) -> ReductionResult:
     paths.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -237,6 +238,10 @@ def run_reduction(
 
     report(2, "Scanning input folders")
     inventory = scan_project(paths)
+    if object_file_selection is not None:
+        for band, files in object_file_selection.items():
+            if band in inventory.objects:
+                inventory.objects[band] = list(files)
     report(8, "Creating master bias")
     master_bias = create_master_bias(inventory.bias)
 

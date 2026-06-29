@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import math
 import threading
+
+import numpy as np
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font, messagebox, ttk
 
 from PIL import Image, ImageOps, ImageTk
 
+from reduction_tool.calibration import read_fits_data
 from reduction_tool.io import find_fits_files, group_by_filter, scan_project
 from reduction_tool.models import FILTERS, ProjectPaths
 from reduction_tool.plotting import save_rgb_image
@@ -544,6 +547,226 @@ class ManualAlignmentWindow(tk.Toplevel):
         for sequence in ("<Left>", "<Right>", "<Up>", "<Down>", "<Shift-Left>", "<Shift-Right>", "<Shift-Up>", "<Shift-Down>", "<space>"):
             self.unbind_all(sequence)
 
+class ObjectFilterWindow(tk.Toplevel):
+    def __init__(
+        self,
+        parent: "ReductionApp",
+        files_by_band: dict[str, list[Path]],
+        selected_files_by_band: dict[str, set[Path]] | None,
+    ) -> None:
+        super().__init__(parent)
+        self.parent = parent
+        self.files_by_band = files_by_band
+        self.selection = {
+            band: set(selected_files_by_band[band]) if selected_files_by_band and band in selected_files_by_band else set(files)
+            for band, files in files_by_band.items()
+        }
+        self.variables: dict[Path, tk.BooleanVar] = {}
+        self.preview_image: ImageTk.PhotoImage | None = None
+        self.selected_band = tk.StringVar(value=self.first_available_band())
+        self.status = tk.StringVar(value="Select the object files that should be used.")
+
+        self.title("Object file filter")
+        self.geometry("1180x820")
+        self.minsize(900, 640)
+        self.configure(bg=DARK_BG)
+        self.configure_app_icon()
+        self._build_layout()
+        self.protocol("WM_DELETE_WINDOW", self.cancel)
+        self.after(50, self.maximize_window)
+        self.render_file_list()
+        self.update_preview()
+        self.grab_set()
+
+    def configure_app_icon(self) -> None:
+        try:
+            if hasattr(self.parent, "app_icon_image"):
+                self.iconphoto(True, self.parent.app_icon_image)
+        except tk.TclError:
+            pass
+
+    def maximize_window(self) -> None:
+        try:
+            self.state("zoomed")
+        except tk.TclError:
+            self.attributes("-zoomed", True)
+
+    def first_available_band(self) -> str:
+        for band in FILTERS:
+            if self.files_by_band.get(band):
+                return band
+        return FILTERS[0]
+
+    def _build_layout(self) -> None:
+        self.columnconfigure(0, weight=0)
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        left = ttk.Frame(self, padding=12)
+        left.grid(row=0, column=0, sticky="ns")
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(2, weight=1)
+
+        ttk.Label(left, text="Band", style="Panel.TLabel").grid(row=0, column=0, sticky="w")
+        band_picker = ttk.Combobox(
+            left,
+            state="readonly",
+            values=tuple(FILTERS),
+            textvariable=self.selected_band,
+            width=12,
+        )
+        band_picker.grid(row=1, column=0, sticky="ew", pady=(6, 12))
+        band_picker.bind("<<ComboboxSelected>>", self.on_band_selected)
+
+        list_frame = ttk.Frame(left)
+        list_frame.grid(row=2, column=0, sticky="nsew")
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+
+        self.file_canvas = tk.Canvas(list_frame, width=420, bg=PANEL_BG, highlightthickness=1, highlightbackground=BORDER)
+        self.file_canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.file_canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.file_canvas.configure(yscrollcommand=scrollbar.set)
+        self.file_list = ttk.Frame(self.file_canvas, padding=8)
+        self.file_canvas.create_window((0, 0), window=self.file_list, anchor="nw")
+        self.file_list.bind("<Configure>", lambda _event: self.file_canvas.configure(scrollregion=self.file_canvas.bbox("all")))
+
+        actions = ttk.Frame(left)
+        actions.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        ttk.Button(actions, text="Select all", command=self.select_all_current_band).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Clear band", command=self.clear_current_band).pack(side="left")
+
+        right = ttk.Frame(self, padding=(0, 12, 12, 12), style="Panel.TFrame")
+        right.grid(row=0, column=1, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=1)
+
+        self.preview_canvas = tk.Canvas(right, bg=PANEL_BG, highlightthickness=0, bd=0)
+        self.preview_canvas.grid(row=0, column=0, sticky="nsew")
+        self.preview_canvas.bind("<Configure>", lambda _event: self.update_preview())
+
+        footer = ttk.Frame(right)
+        footer.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        footer.columnconfigure(0, weight=1)
+        ttk.Label(footer, textvariable=self.status, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Button(footer, text="OK", command=self.ok).grid(row=0, column=1, padx=(8, 0))
+        ttk.Button(footer, text="Cancel", command=self.cancel).grid(row=0, column=2, padx=(8, 0))
+
+    def on_band_selected(self, _event: object | None = None) -> None:
+        self.render_file_list()
+        self.update_preview()
+
+    def current_band(self) -> str:
+        return self.selected_band.get() or self.first_available_band()
+
+    def render_file_list(self) -> None:
+        for child in self.file_list.winfo_children():
+            child.destroy()
+        self.variables = {}
+
+        band = self.current_band()
+        files = self.files_by_band.get(band, [])
+        if not files:
+            ttk.Label(self.file_list, text="No object files for this band.", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+            return
+
+        for row, file_path in enumerate(files):
+            variable = tk.BooleanVar(value=file_path in self.selection.get(band, set()))
+            self.variables[file_path] = variable
+            check = tk.Checkbutton(
+                self.file_list,
+                text=file_path.name,
+                variable=variable,
+                command=self.on_file_toggled,
+                bg=PANEL_BG,
+                fg=TEXT,
+                activebackground=PANEL_BG,
+                activeforeground=TEXT,
+                selectcolor=FIELD_BG,
+                anchor="w",
+                justify="left",
+            )
+            check.grid(row=row, column=0, sticky="ew", pady=2)
+
+    def on_file_toggled(self) -> None:
+        band = self.current_band()
+        selected = {file_path for file_path, variable in self.variables.items() if variable.get()}
+        self.selection[band] = selected
+        self.update_preview()
+
+    def select_all_current_band(self) -> None:
+        band = self.current_band()
+        self.selection[band] = set(self.files_by_band.get(band, []))
+        self.render_file_list()
+        self.update_preview()
+
+    def clear_current_band(self) -> None:
+        self.selection[self.current_band()] = set()
+        self.render_file_list()
+        self.update_preview()
+
+    def update_preview(self) -> None:
+        if not hasattr(self, "preview_canvas"):
+            return
+        band = self.current_band()
+        selected = list(self.selection.get(band, set()))
+        self.preview_canvas.delete("all")
+        if not selected:
+            self.status.set(f"{band} band: no files selected.")
+            self.preview_canvas.create_text(
+                max(1, self.preview_canvas.winfo_width()) // 2,
+                max(1, self.preview_canvas.winfo_height()) // 2,
+                text="No files selected",
+                fill=MUTED_TEXT,
+                font=("Segoe UI", 16),
+            )
+            return
+
+        try:
+            stack = [read_fits_data(file_path) for file_path in selected]
+            preview_data = stack[0] if len(stack) == 1 else np.median(stack, axis=0)
+            image = self.preview_to_image(preview_data)
+        except Exception as exc:
+            self.status.set(f"Preview failed for {band} band: {exc}")
+            return
+
+        canvas_width = max(1, self.preview_canvas.winfo_width())
+        canvas_height = max(1, self.preview_canvas.winfo_height())
+        image_width, image_height = image.size
+        scale = min(canvas_width / image_width, canvas_height / image_height)
+        display_width = max(1, int(image_width * scale))
+        display_height = max(1, int(image_height * scale))
+        image = image.resize((display_width, display_height), Image.Resampling.LANCZOS)
+        self.preview_image = ImageTk.PhotoImage(image)
+        self.preview_canvas.create_image(
+            canvas_width // 2,
+            canvas_height // 2,
+            image=self.preview_image,
+            anchor="center",
+        )
+        total = len(self.files_by_band.get(band, []))
+        self.status.set(f"{band} band: {len(selected)} of {total} object file(s) selected.")
+
+    def preview_to_image(self, data: object) -> Image.Image:
+        array = np.asarray(data, dtype=float)
+        array = np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0)
+        low, high = np.nanpercentile(array, [1, 99.5])
+        if high <= low:
+            low, high = float(np.nanmin(array)), float(np.nanmax(array))
+        if high <= low:
+            normalized = np.zeros_like(array, dtype=np.uint8)
+        else:
+            normalized = np.clip((array - low) / (high - low), 0, 1)
+            normalized = (normalized * 255).astype(np.uint8)
+        return ImageOps.flip(Image.fromarray(normalized, mode="L")).convert("RGB")
+
+    def ok(self) -> None:
+        self.parent.on_object_filter_saved(self.selection)
+        self.destroy()
+
+    def cancel(self) -> None:
+        self.destroy()
 
 class ReductionApp(tk.Tk):
     def __init__(self) -> None:
@@ -563,6 +786,8 @@ class ReductionApp(tk.Tk):
         self.alignment_mode = tk.StringVar(value=ALIGNMENT_MANUAL)
         self.status = tk.StringVar(value="Select the input and output folders to begin.")
         self.progress = tk.DoubleVar(value=0.0)
+        self.object_file_selection: dict[str, set[Path]] | None = None
+        self.object_filter_folder: Path | None = None
 
         self._build_layout()
         self._bind_field_changes()
@@ -696,6 +921,13 @@ class ReductionApp(tk.Tk):
             state="disabled",
         )
         self.generate_button.pack(side="left")
+        self.filter_button = ttk.Button(
+            actions,
+            text="Filter object files",
+            command=self.open_object_filter,
+            state="disabled",
+        )
+        self.filter_button.pack(side="left", padx=(12, 0))
 
         body = ttk.Frame(self, padding=(16, 0, 16, 16))
         body.grid(row=2, column=0, sticky="nsew")
@@ -768,6 +1000,8 @@ class ReductionApp(tk.Tk):
         folder = filedialog.askdirectory(title="Select the object folder")
         if folder:
             self.object_dir.set(folder)
+            self.object_file_selection = None
+            self.object_filter_folder = None
             self.object_name.set(Path(folder).name)
             if not self.output_dir.get().strip():
                 self.output_dir.set(str(Path(folder).parent / "output"))
@@ -824,7 +1058,8 @@ class ReductionApp(tk.Tk):
             return
 
         bias_count = len(inventory.bias)
-        for band, (flat_count, object_count) in inventory.counts_by_filter().items():
+        for band, (flat_count, _object_count) in inventory.counts_by_filter().items():
+            object_count = self.object_count_label(band, inventory.objects.get(band, []))
             self.tree.item(band, values=(bias_count, flat_count, object_count))
 
         self.status.set(
@@ -855,7 +1090,8 @@ class ReductionApp(tk.Tk):
 
             for band in FILTERS:
                 flat_count = len(flats.get(band, []))
-                object_count = len(objects.get(band, []))
+                object_band_files = objects.get(band, [])
+                object_count = self.object_count_label(band, object_band_files)
                 self.tree.item(band, values=(bias_count, flat_count, object_count))
 
             self.status.set(
@@ -884,6 +1120,62 @@ class ReductionApp(tk.Tk):
         state = "normal" if self.all_fields_ready() else "disabled"
         if hasattr(self, "generate_button"):
             self.generate_button.configure(state=state)
+        if hasattr(self, "filter_button"):
+            filter_state = "normal" if self.object_dir.get().strip() else "disabled"
+            self.filter_button.configure(state=filter_state)
+
+    def object_files_by_band(self) -> dict[str, list[Path]]:
+        if not self.object_dir.get().strip():
+            return {band: [] for band in FILTERS}
+        return group_by_filter(find_fits_files(Path(self.object_dir.get())))
+
+    def object_filter_matches_current_folder(self) -> bool:
+        if self.object_filter_folder is None:
+            return False
+        return self.object_dir.get().strip() and self.object_filter_folder == Path(self.object_dir.get())
+
+    def object_count_label(self, band: str, files: list[Path]) -> int | str:
+        if self.object_file_selection is None or not self.object_filter_matches_current_folder():
+            return len(files)
+        available = set(files)
+        selected = self.object_file_selection.get(band, set()) & available
+        self.object_file_selection[band] = selected
+        return f"{len(selected)}/{len(files)}"
+
+    def selection_summary(self) -> str:
+        if self.object_file_selection is None or not self.object_filter_matches_current_folder():
+            return "all object files selected"
+        parts = []
+        files_by_band = self.object_files_by_band()
+        for band in FILTERS:
+            total = len(files_by_band.get(band, []))
+            selected = len(self.object_file_selection.get(band, set()) & set(files_by_band.get(band, [])))
+            if total:
+                parts.append(f"{band}: {selected}/{total}")
+        return "; ".join(parts) if parts else "no object files selected"
+
+    def selected_object_file_lists(self) -> dict[str, list[Path]] | None:
+        if self.object_file_selection is None or not self.object_filter_matches_current_folder():
+            return None
+        files_by_band = self.object_files_by_band()
+        selected: dict[str, list[Path]] = {}
+        for band in FILTERS:
+            available = set(files_by_band.get(band, []))
+            selected[band] = sorted(self.object_file_selection.get(band, set()) & available)
+        return selected
+
+    def open_object_filter(self) -> None:
+        files_by_band = self.object_files_by_band()
+        if not any(files_by_band.values()):
+            messagebox.showerror("Object file filter", "Select an object folder with FITS files first.")
+            return
+        ObjectFilterWindow(self, files_by_band, self.object_file_selection)
+
+    def on_object_filter_saved(self, selection: dict[str, set[Path]]) -> None:
+        self.object_file_selection = {band: set(selection.get(band, set())) for band in FILTERS}
+        self.object_filter_folder = Path(self.object_dir.get())
+        self.scan_files_partial()
+        self.status.set(f"Object file filter applied. {self.selection_summary()}.")
 
     def start_reduction(self) -> None:
         thread = threading.Thread(target=self.run_reduction, daemon=True)
@@ -962,6 +1254,7 @@ class ReductionApp(tk.Tk):
                 object_name=object_name,
                 alignment_mode=alignment_mode,
                 progress_callback=self.update_progress,
+                object_file_selection=self.selected_object_file_lists(),
             )
 
             if alignment_mode == ALIGNMENT_MANUAL:
