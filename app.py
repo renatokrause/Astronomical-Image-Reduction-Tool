@@ -57,7 +57,7 @@ class ManualAlignmentWindow(tk.Toplevel):
         self.bind_shortcuts()
         self.render_preview()
         self.after(50, self.maximize_window)
-        self.focus_set()
+        self.after(100, self.focus_preview_update)
         self.grab_set()
 
     def maximize_window(self) -> None:
@@ -74,14 +74,14 @@ class ManualAlignmentWindow(tk.Toplevel):
             pass
 
     def bind_shortcuts(self) -> None:
-        self.bind_all("<Left>", lambda _event: self.handle_key_nudge(-self.step.get(), 0.0))
-        self.bind_all("<Right>", lambda _event: self.handle_key_nudge(self.step.get(), 0.0))
-        self.bind_all("<Up>", lambda _event: self.handle_key_nudge(0.0, self.step.get()))
-        self.bind_all("<Down>", lambda _event: self.handle_key_nudge(0.0, -self.step.get()))
-        self.bind_all("<Shift-Left>", lambda _event: self.handle_key_nudge(-10.0, 0.0))
-        self.bind_all("<Shift-Right>", lambda _event: self.handle_key_nudge(10.0, 0.0))
-        self.bind_all("<Shift-Up>", lambda _event: self.handle_key_nudge(0.0, 10.0))
-        self.bind_all("<Shift-Down>", lambda _event: self.handle_key_nudge(0.0, -10.0))
+        self.bind_all("<Left>", lambda event: self.handle_key_nudge(event, -self.step.get(), 0.0))
+        self.bind_all("<Right>", lambda event: self.handle_key_nudge(event, self.step.get(), 0.0))
+        self.bind_all("<Up>", lambda event: self.handle_key_nudge(event, 0.0, self.step.get()))
+        self.bind_all("<Down>", lambda event: self.handle_key_nudge(event, 0.0, -self.step.get()))
+        self.bind_all("<Shift-Left>", lambda event: self.handle_key_nudge(event, -10.0, 0.0))
+        self.bind_all("<Shift-Right>", lambda event: self.handle_key_nudge(event, 10.0, 0.0))
+        self.bind_all("<Shift-Up>", lambda event: self.handle_key_nudge(event, 0.0, 10.0))
+        self.bind_all("<Shift-Down>", lambda event: self.handle_key_nudge(event, 0.0, -10.0))
         self.bind_all("<space>", lambda _event: self.handle_update_preview())
 
     def _build_layout(self) -> None:
@@ -109,18 +109,19 @@ class ManualAlignmentWindow(tk.Toplevel):
         controls.columnconfigure(7, weight=1)
 
         ttk.Label(controls, text="Channel").grid(row=0, column=0, sticky="w")
-        channel_picker = ttk.Combobox(
+        self.channel_picker = ttk.Combobox(
             controls,
             state="readonly",
             width=8,
             values=tuple(self.available_bands),
             textvariable=self.selected_band,
         )
-        channel_picker.grid(row=0, column=1, sticky="w", padx=(6, 18))
-        channel_picker.bind("<<ComboboxSelected>>", self.on_channel_selected)
+        self.channel_picker.grid(row=0, column=1, sticky="w", padx=(6, 18))
+        self.channel_picker.bind("<<ComboboxSelected>>", self.on_channel_selected)
 
         ttk.Label(controls, text="Step").grid(row=0, column=2, sticky="w")
-        self.create_number_spinbox(controls, self.step, 0.1, 50.0, 0.5, 7).grid(
+        self.step_spinbox = self.create_number_spinbox(controls, self.step, 0.1, 50.0, 0.5, 7)
+        self.step_spinbox.grid(
             row=0,
             column=3,
             sticky="w",
@@ -128,14 +129,16 @@ class ManualAlignmentWindow(tk.Toplevel):
         )
 
         ttk.Label(controls, text="X").grid(row=0, column=4, sticky="w")
-        self.create_number_spinbox(controls, self.dx, -500.0, 500.0, 0.5, 8).grid(
+        self.dx_spinbox = self.create_number_spinbox(controls, self.dx, -500.0, 500.0, 0.5, 8)
+        self.dx_spinbox.grid(
             row=0,
             column=5,
             sticky="w",
             padx=(6, 10),
         )
         ttk.Label(controls, text="Y").grid(row=0, column=6, sticky="w")
-        self.create_number_spinbox(controls, self.dy, -500.0, 500.0, 0.5, 8).grid(
+        self.dy_spinbox = self.create_number_spinbox(controls, self.dy, -500.0, 500.0, 0.5, 8)
+        self.dy_spinbox.grid(
             row=0,
             column=7,
             sticky="w",
@@ -151,7 +154,8 @@ class ManualAlignmentWindow(tk.Toplevel):
 
         actions = ttk.Frame(controls)
         actions.grid(row=1, column=4, columnspan=4, sticky="e", pady=(10, 0))
-        ttk.Button(actions, text="Update preview (Space)", command=self.update_current_channel).pack(side="left", padx=(0, 8))
+        self.update_preview_button = ttk.Button(actions, text="Update preview (Space)", command=self.update_current_channel)
+        self.update_preview_button.pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Reset channel", command=self.reset_channel).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Reset all", command=self.reset_all).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Save image", command=self.save_image).pack(side="left", padx=(0, 8))
@@ -172,7 +176,7 @@ class ManualAlignmentWindow(tk.Toplevel):
         increment: float,
         width: int,
     ) -> tk.Spinbox:
-        return tk.Spinbox(
+        spinbox = tk.Spinbox(
             parent,
             from_=from_value,
             to=to_value,
@@ -191,12 +195,32 @@ class ManualAlignmentWindow(tk.Toplevel):
             relief="flat",
             bd=0,
         )
+        for sequence in ("<Return>", "<FocusOut>", "<ButtonRelease-1>"):
+            spinbox.bind(sequence, self.on_offset_control_changed)
+        return spinbox
+
+    def focus_preview_update(self) -> None:
+        if hasattr(self, "update_preview_button"):
+            self.update_preview_button.focus_set()
+
+    def on_offset_control_changed(self, _event: object | None = None) -> None:
+        self.mark_preview_stale()
+        self.after_idle(self.focus_preview_update)
 
     def on_channel_selected(self, _event: object | None = None) -> None:
         band = self.selected_band.get()
         dx, dy = self.offsets.get(band, [0.0, 0.0])
         self.dx.set(dx)
         self.dy.set(dy)
+        self.after_idle(self.focus_preview_update)
+
+    def is_manual_input_widget(self, widget: object) -> bool:
+        return widget in {
+            getattr(self, "channel_picker", None),
+            getattr(self, "step_spinbox", None),
+            getattr(self, "dx_spinbox", None),
+            getattr(self, "dy_spinbox", None),
+        }
 
     def current_offsets(self) -> dict[str, tuple[float, float]]:
         return {band: (values[0], values[1]) for band, values in self.offsets.items()}
@@ -223,7 +247,13 @@ class ManualAlignmentWindow(tk.Toplevel):
         )
         self.status.set(f"Pending manual offsets: {offsets}. Press Space or Update preview.")
 
-    def handle_key_nudge(self, dx: float, dy: float) -> str:
+    def handle_key_nudge(self, event: tk.Event, dx: float, dy: float) -> str:
+        if self.is_manual_input_widget(event.widget):
+            if event.widget == getattr(self, "channel_picker", None):
+                self.after_idle(self.focus_preview_update)
+            else:
+                self.after_idle(self.on_offset_control_changed)
+            return "break"
         self.nudge(dx, dy)
         return "break"
 
@@ -317,7 +347,7 @@ class ReductionApp(tk.Tk):
         self.object_dir = tk.StringVar()
         self.output_dir = tk.StringVar()
         self.object_name = tk.StringVar(value="object")
-        self.alignment_mode = tk.StringVar(value=ALIGNMENT_AUTOMATIC)
+        self.alignment_mode = tk.StringVar(value=ALIGNMENT_MANUAL)
         self.status = tk.StringVar(value="Select the input and output folders to begin.")
         self.progress = tk.DoubleVar(value=0.0)
 
@@ -418,7 +448,7 @@ class ReductionApp(tk.Tk):
             values=tuple(alignment_options.keys()),
         )
         self.alignment_mode_picker.grid(row=5, column=1, sticky="ew", padx=8, pady=(10, 0))
-        self.alignment_mode_picker.set("Automatic band alignment")
+        self.alignment_mode_picker.set("Manual band adjustment")
         self.alignment_mode_picker.bind("<<ComboboxSelected>>", self.on_alignment_mode_selected)
 
         if hasattr(self, "header_icon_image"):
@@ -485,7 +515,7 @@ class ReductionApp(tk.Tk):
 
     def on_alignment_mode_selected(self, _event: object | None = None) -> None:
         selected = self.alignment_mode_picker.get()
-        self.alignment_mode.set(self.alignment_mode_labels.get(selected, ALIGNMENT_AUTOMATIC))
+        self.alignment_mode.set(self.alignment_mode_labels.get(selected, ALIGNMENT_MANUAL))
 
     def _add_folder_picker(
         self,
