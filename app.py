@@ -822,11 +822,11 @@ class ReductionApp(tk.Tk):
         button_font = default_font.copy()
         button_font.configure(weight="bold")
         brand_title_font = default_font.copy()
-        brand_title_font.configure(size=20, weight="bold")
+        brand_title_font.configure(size=24, weight="bold")
         brand_subtitle_font = default_font.copy()
-        brand_subtitle_font.configure(size=12, weight="bold")
+        brand_subtitle_font.configure(size=14, weight="bold")
         brand_author_font = default_font.copy()
-        brand_author_font.configure(size=9)
+        brand_author_font.configure(size=5)
 
         self.style.configure(".", background=DARK_BG, foreground=TEXT)
         self.style.configure("TFrame", background=DARK_BG)
@@ -934,7 +934,7 @@ class ReductionApp(tk.Tk):
                 row=2,
                 column=1,
                 sticky="nw",
-                pady=(8, 0),
+                pady=(6, 0),
             )
             ttk.Label(brand, text="github.com/ericBK26 | ericbairroskrause@gmail.com", style="BrandAuthor.TLabel").grid(
                 row=3,
