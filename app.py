@@ -91,10 +91,10 @@ class ManualAlignmentWindow(tk.Toplevel):
             pass
 
     def bind_shortcuts(self) -> None:
-        self.bind_all("<Left>", lambda event: self.handle_key_nudge(event, -self.step.get(), 0.0))
-        self.bind_all("<Right>", lambda event: self.handle_key_nudge(event, self.step.get(), 0.0))
-        self.bind_all("<Up>", lambda event: self.handle_key_nudge(event, 0.0, self.step.get()))
-        self.bind_all("<Down>", lambda event: self.handle_key_nudge(event, 0.0, -self.step.get()))
+        self.bind_all("<Left>", lambda event: self.handle_key_nudge(event, -self.current_step(), 0.0))
+        self.bind_all("<Right>", lambda event: self.handle_key_nudge(event, self.current_step(), 0.0))
+        self.bind_all("<Up>", lambda event: self.handle_key_nudge(event, 0.0, self.current_step()))
+        self.bind_all("<Down>", lambda event: self.handle_key_nudge(event, 0.0, -self.current_step()))
         self.bind_all("<Shift-Left>", lambda event: self.handle_key_nudge(event, -10.0, 0.0))
         self.bind_all("<Shift-Right>", lambda event: self.handle_key_nudge(event, 10.0, 0.0))
         self.bind_all("<Shift-Up>", lambda event: self.handle_key_nudge(event, 0.0, 10.0))
@@ -142,6 +142,8 @@ class ManualAlignmentWindow(tk.Toplevel):
 
         ttk.Label(controls, text="Step").grid(row=0, column=2, sticky="w")
         self.step_spinbox = self.create_number_spinbox(controls, self.step, 0.1, 50.0, 0.5, 7)
+        for sequence in ("<Return>", "<FocusOut>", "<ButtonRelease-1>"):
+            self.step_spinbox.bind(sequence, self.on_step_changed)
         self.step_spinbox.grid(
             row=0,
             column=3,
@@ -168,10 +170,10 @@ class ManualAlignmentWindow(tk.Toplevel):
 
         arrows = ttk.Frame(controls)
         arrows.grid(row=1, column=0, columnspan=4, sticky="w", pady=(10, 0))
-        ttk.Button(arrows, text="Left", command=lambda: self.nudge(-self.step.get(), 0.0)).grid(row=1, column=0, padx=2)
-        ttk.Button(arrows, text="Up", command=lambda: self.nudge(0.0, self.step.get())).grid(row=0, column=1, padx=2)
-        ttk.Button(arrows, text="Down", command=lambda: self.nudge(0.0, -self.step.get())).grid(row=1, column=1, padx=2)
-        ttk.Button(arrows, text="Right", command=lambda: self.nudge(self.step.get(), 0.0)).grid(row=1, column=2, padx=2)
+        ttk.Button(arrows, text="Left", command=lambda: self.nudge(-self.current_step(), 0.0)).grid(row=1, column=0, padx=2)
+        ttk.Button(arrows, text="Up", command=lambda: self.nudge(0.0, self.current_step())).grid(row=0, column=1, padx=2)
+        ttk.Button(arrows, text="Down", command=lambda: self.nudge(0.0, -self.current_step())).grid(row=1, column=1, padx=2)
+        ttk.Button(arrows, text="Right", command=lambda: self.nudge(self.current_step(), 0.0)).grid(row=1, column=2, padx=2)
 
         view_tools = ttk.Frame(controls)
         view_tools.grid(row=2, column=0, columnspan=4, sticky="w", pady=(10, 0))
@@ -227,6 +229,19 @@ class ManualAlignmentWindow(tk.Toplevel):
         for sequence in ("<Return>", "<FocusOut>", "<ButtonRelease-1>"):
             spinbox.bind(sequence, self.on_offset_control_changed)
         return spinbox
+
+    def current_step(self) -> float:
+        try:
+            value = float(self.step_spinbox.get())
+        except (AttributeError, tk.TclError, ValueError):
+            value = float(self.step.get())
+        value = max(0.1, min(50.0, value))
+        self.step.set(value)
+        return value
+
+    def on_step_changed(self, _event: object | None = None) -> None:
+        self.current_step()
+        self.after_idle(self.focus_preview_update)
 
     def focus_preview_update(self) -> None:
         if hasattr(self, "update_preview_button"):
@@ -460,6 +475,8 @@ class ManualAlignmentWindow(tk.Toplevel):
         if self.is_manual_input_widget(event.widget):
             if event.widget == getattr(self, "channel_picker", None):
                 self.after_idle(self.focus_preview_update)
+            elif event.widget == getattr(self, "step_spinbox", None):
+                self.after_idle(self.on_step_changed)
             else:
                 self.after_idle(self.on_offset_control_changed)
             return "break"
