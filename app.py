@@ -29,7 +29,7 @@ TEXT = "#e5ecff"
 MUTED_TEXT = "#9aa7c7"
 ACCENT = "#4f8cff"
 ACCENT_HOVER = "#6d5dfc"
-LOGO_DISPLAY_WIDTH = 420
+HEADER_ICON_SIZE = 150
 
 
 class ManualAlignmentWindow(tk.Toplevel):
@@ -253,6 +253,10 @@ class ReductionApp(tk.Tk):
         default_font = font.nametofont("TkDefaultFont")
         button_font = default_font.copy()
         button_font.configure(weight="bold")
+        brand_title_font = default_font.copy()
+        brand_title_font.configure(size=20, weight="bold")
+        brand_subtitle_font = default_font.copy()
+        brand_subtitle_font.configure(size=12, weight="bold")
 
         self.style.configure(".", background=DARK_BG, foreground=TEXT)
         self.style.configure("TFrame", background=DARK_BG)
@@ -261,6 +265,8 @@ class ReductionApp(tk.Tk):
         self.style.configure("Panel.TLabel", background=PANEL_BG, foreground=TEXT)
         self.style.configure("Muted.TLabel", background=DARK_BG, foreground=MUTED_TEXT)
         self.style.configure("Logo.TLabel", background=PANEL_BG, foreground=TEXT)
+        self.style.configure("BrandTitle.TLabel", background=PANEL_BG, foreground="#b9c7ea", font=brand_title_font)
+        self.style.configure("BrandSubtitle.TLabel", background=PANEL_BG, foreground="#55c7ff", font=brand_subtitle_font)
         self.style.configure("Preview.TLabel", background=PANEL_BG, foreground=TEXT)
         self.style.configure("TLabelFrame", background=DARK_BG, foreground=MUTED_TEXT, bordercolor=BORDER, borderwidth=1, relief="flat")
         self.style.configure("TLabelFrame.Label", background=DARK_BG, foreground=MUTED_TEXT)
@@ -284,8 +290,6 @@ class ReductionApp(tk.Tk):
         assets_dir = Path(__file__).resolve().parent / "assets"
         icon_file = assets_dir / "airt-icon.ico"
         icon_png = assets_dir / "airt-icon.png"
-        logo_file = assets_dir / "airt-logo.png"
-
         try:
             if icon_file.exists():
                 self.iconbitmap(icon_file)
@@ -294,17 +298,10 @@ class ReductionApp(tk.Tk):
 
         try:
             if icon_png.exists():
-                self.app_icon_image = ImageTk.PhotoImage(Image.open(icon_png).resize((256, 256), Image.Resampling.LANCZOS))
+                icon = Image.open(icon_png).convert("RGBA")
+                self.app_icon_image = ImageTk.PhotoImage(icon.resize((256, 256), Image.Resampling.LANCZOS))
+                self.header_icon_image = ImageTk.PhotoImage(icon.resize((HEADER_ICON_SIZE, HEADER_ICON_SIZE), Image.Resampling.LANCZOS))
                 self.iconphoto(True, self.app_icon_image)
-        except (tk.TclError, OSError):
-            pass
-
-        try:
-            if logo_file.exists():
-                logo = Image.open(logo_file).convert("RGBA")
-                width = LOGO_DISPLAY_WIDTH
-                height = max(1, round(logo.height * (width / logo.width)))
-                self.app_logo_image = ImageTk.PhotoImage(logo.resize((width, height), Image.Resampling.LANCZOS))
         except (tk.TclError, OSError):
             pass
 
@@ -340,14 +337,26 @@ class ReductionApp(tk.Tk):
         self.alignment_mode_picker.set("Automatic band alignment")
         self.alignment_mode_picker.bind("<<ComboboxSelected>>", self.on_alignment_mode_selected)
 
-        if hasattr(self, "app_logo_image"):
-            self.header_logo_image = self.app_logo_image
-            ttk.Label(header, image=self.header_logo_image, style="Logo.TLabel").grid(
+        if hasattr(self, "header_icon_image"):
+            brand = ttk.Frame(header, style="Panel.TFrame")
+            brand.grid(row=0, column=3, rowspan=6, padx=(34, 18), sticky="e")
+            brand.columnconfigure(1, weight=1)
+            ttk.Label(brand, image=self.header_icon_image, style="Logo.TLabel").grid(
                 row=0,
-                column=3,
-                rowspan=6,
-                padx=(28, 12),
+                column=0,
+                rowspan=2,
                 sticky="e",
+                padx=(0, 18),
+            )
+            ttk.Label(brand, text="Astronomical", style="BrandTitle.TLabel").grid(
+                row=0,
+                column=1,
+                sticky="sw",
+            )
+            ttk.Label(brand, text="Image Reduction Tool", style="BrandSubtitle.TLabel").grid(
+                row=1,
+                column=1,
+                sticky="nw",
             )
 
         actions = ttk.Frame(self, padding=(16, 14, 16, 14))
