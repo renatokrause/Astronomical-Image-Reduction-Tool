@@ -362,9 +362,25 @@ class ManualAlignmentWindow(tk.Toplevel):
         self.draw_measurement_overlay()
         if len(self.measure_points) == 2:
             first, second = self.measure_points
-            distance = math.hypot(second[0] - first[0], second[1] - first[1])
-            self.status.set(f"Measured distance: {distance:.2f} px")
-            messagebox.showinfo("Measurement", f"Distance: {distance:.2f} px", parent=self)
+            display_dx = second[0] - first[0]
+            display_dy = second[1] - first[1]
+            suggested_dx = display_dx
+            suggested_dy = -display_dy
+            distance = math.hypot(display_dx, display_dy)
+            self.status.set(
+                f"Measured distance: {distance:.2f} px; suggested offset: "
+                f"X={suggested_dx:.2f}, Y={suggested_dy:.2f}"
+            )
+            messagebox.showinfo(
+                "Measurement",
+                "Measured from first click to second click.\n\n"
+                f"Distance: {distance:.2f} px\n"
+                f"Display delta: X={display_dx:.2f} px, Y={display_dy:.2f} px\n\n"
+                "Suggested offset for the selected channel:\n"
+                f"X={suggested_dx:.2f}\n"
+                f"Y={suggested_dy:.2f}",
+                parent=self,
+            )
 
     def canvas_to_image_point(self, canvas_x: int, canvas_y: int) -> tuple[float, float] | None:
         if self.preview_pil_image is None or self.display_scale <= 0:
