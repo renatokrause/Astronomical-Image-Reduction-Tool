@@ -45,7 +45,7 @@ class ManualAlignmentWindow(tk.Toplevel):
         self.configure_app_icon()
         self.configure(bg=DARK_BG)
 
-        self.available_bands = [band for band in ("R", "V", "B") if band in result.stacked]
+        self.available_bands = [band for band in FILTERS if band in result.stacked]
         self.offsets = {band: [0.0, 0.0] for band in self.available_bands}
         self.selected_band = tk.StringVar(value=self.available_bands[0] if self.available_bands else "")
         self.step = tk.DoubleVar(value=1.0)
