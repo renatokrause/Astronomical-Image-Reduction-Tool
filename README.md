@@ -69,9 +69,9 @@ pip install -r requirements.txt
 python app.py
 ```
 
-After the dependencies are installed, you can double-click `run_app.bat`.
+After the dependencies are installed, you can double-click `AIRT.bat`.
 
-If the environment needs to be recreated, double-click `setup_environment.bat`.
+If you want a Windows shortcut with the application icon, run `create_airt_shortcut.ps1` once and then open `AIRT.lnk`. If the environment needs to be recreated, double-click `setup_environment.bat`.
 
 ## What The Program Does
 
