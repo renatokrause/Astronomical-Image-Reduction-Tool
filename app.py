@@ -20,6 +20,15 @@ from reduction_tool.processing import (
     run_reduction,
 )
 
+DARK_BG = "#080c18"
+PANEL_BG = "#101729"
+FIELD_BG = "#151d31"
+BORDER = "#26324d"
+TEXT = "#e7edf9"
+MUTED_TEXT = "#a8b3cf"
+ACCENT = "#6d5dfc"
+ACCENT_HOVER = "#7f72ff"
+
 
 class ManualAlignmentWindow(tk.Toplevel):
     def __init__(self, parent: "ReductionApp", result: object) -> None:
@@ -30,6 +39,7 @@ class ManualAlignmentWindow(tk.Toplevel):
         self.geometry("980x760")
         self.minsize(860, 620)
         self.configure_app_icon()
+        self.configure(bg=DARK_BG)
 
         self.available_bands = [band for band in ("R", "V", "B") if band in result.stacked]
         self.offsets = {band: [0.0, 0.0] for band in self.available_bands}
@@ -67,12 +77,12 @@ class ManualAlignmentWindow(tk.Toplevel):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
-        preview_frame = ttk.Frame(self, padding=12)
+        preview_frame = ttk.Frame(self, padding=12, style="Panel.TFrame")
         preview_frame.grid(row=0, column=0, sticky="nsew")
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
 
-        self.preview_label = ttk.Label(preview_frame, anchor="center")
+        self.preview_label = ttk.Label(preview_frame, anchor="center", style="Preview.TLabel")
         self.preview_label.grid(row=0, column=0, sticky="nsew")
 
         controls = ttk.Frame(self, padding=(12, 0, 12, 12))
@@ -213,6 +223,8 @@ class ReductionApp(tk.Tk):
         super().__init__()
         self.title("Astronomical Image Reduction Tool")
         self.configure_app_icon()
+        self.configure(bg=DARK_BG)
+        self.configure_dark_theme()
         self.geometry("820x560")
         self.minsize(760, 500)
 
@@ -228,6 +240,34 @@ class ReductionApp(tk.Tk):
         self._bind_field_changes()
         self.update_generate_button_state()
         self.maximize_window()
+
+    def configure_dark_theme(self) -> None:
+        self.style = ttk.Style(self)
+        try:
+            self.style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        default_font = font.nametofont("TkDefaultFont")
+        button_font = default_font.copy()
+        button_font.configure(weight="bold")
+
+        self.style.configure(".", background=DARK_BG, foreground=TEXT)
+        self.style.configure("TFrame", background=DARK_BG)
+        self.style.configure("Panel.TFrame", background=PANEL_BG)
+        self.style.configure("TLabel", background=DARK_BG, foreground=TEXT)
+        self.style.configure("Preview.TLabel", background=PANEL_BG, foreground=TEXT)
+        self.style.configure("TLabelFrame", background=DARK_BG, foreground=TEXT, bordercolor=BORDER)
+        self.style.configure("TLabelFrame.Label", background=DARK_BG, foreground=MUTED_TEXT)
+        self.style.configure("TEntry", fieldbackground=FIELD_BG, foreground=TEXT, bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, insertcolor=TEXT)
+        self.style.configure("TCombobox", fieldbackground=FIELD_BG, foreground=TEXT, background=FIELD_BG, arrowcolor=TEXT, bordercolor=BORDER)
+        self.style.configure("Treeview", background=FIELD_BG, foreground=TEXT, fieldbackground=FIELD_BG, bordercolor=BORDER, rowheight=26)
+        self.style.configure("Treeview.Heading", background=PANEL_BG, foreground=TEXT, bordercolor=BORDER)
+        self.style.configure("TButton", background=FIELD_BG, foreground=TEXT, bordercolor=BORDER, padding=(10, 5))
+        self.style.map("TButton", background=[("active", BORDER), ("disabled", "#1b2235")], foreground=[("disabled", "#66708a")])
+        self.style.map("TCombobox", fieldbackground=[("readonly", FIELD_BG)], foreground=[("readonly", TEXT)])
+        self.style.configure("Primary.TButton", background=ACCENT, foreground="#ffffff", font=button_font, padding=(16, 8), bordercolor=ACCENT)
+        self.style.map("Primary.TButton", background=[("active", ACCENT_HOVER), ("disabled", "#252b3d")], foreground=[("disabled", "#79839c")])
 
     def maximize_window(self) -> None:
         try:
@@ -264,7 +304,7 @@ class ReductionApp(tk.Tk):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
 
-        header = ttk.Frame(self, padding=16)
+        header = ttk.Frame(self, padding=16, style="Panel.TFrame")
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(1, weight=1)
 
@@ -294,7 +334,7 @@ class ReductionApp(tk.Tk):
 
         if hasattr(self, "app_logo_image"):
             self.header_logo_image = self.app_logo_image.subsample(6, 6)
-            ttk.Label(header, image=self.header_logo_image).grid(
+            ttk.Label(header, image=self.header_logo_image, style="Preview.TLabel").grid(
                 row=0,
                 column=3,
                 rowspan=6,
@@ -304,11 +344,6 @@ class ReductionApp(tk.Tk):
 
         actions = ttk.Frame(self, padding=(16, 0, 16, 12))
         actions.grid(row=1, column=0, sticky="ew")
-        default_font = font.nametofont("TkDefaultFont")
-        button_font = default_font.copy()
-        button_font.configure(weight="bold")
-        self.style = ttk.Style(self)
-        self.style.configure("Primary.TButton", font=button_font, padding=(16, 8))
         self.generate_button = ttk.Button(
             actions,
             text="Generate RGB image",
