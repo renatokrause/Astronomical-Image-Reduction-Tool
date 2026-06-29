@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from astropy.visualization import make_lupton_rgb
 
-from .calibration import create_master_bias, create_master_flat, read_fits_data, reduce_image
+from .calibration import create_master_bias, create_master_flat, median_stack, read_fits_data, reduce_image
 from .io import scan_project
 from .models import ProjectPaths
 
@@ -28,6 +28,30 @@ def align_to_reference(image: np.ndarray, reference: np.ndarray) -> np.ndarray:
         return image
 
 
+def crop_to_shape(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    target_rows, target_cols = shape
+    rows, cols = image.shape
+
+    if rows < target_rows or cols < target_cols:
+        raise ValueError(
+            f"Cannot crop image with shape {image.shape} to larger shape {shape}."
+        )
+
+    row_start = (rows - target_rows) // 2
+    col_start = (cols - target_cols) // 2
+    return image[row_start : row_start + target_rows, col_start : col_start + target_cols]
+
+
+def crop_to_common_shape(images: list[np.ndarray]) -> list[np.ndarray]:
+    if not images:
+        return images
+
+    min_rows = min(image.shape[0] for image in images)
+    min_cols = min(image.shape[1] for image in images)
+    common_shape = (min_rows, min_cols)
+    return [crop_to_shape(image, common_shape) for image in images]
+
+
 def stack_band(
     object_files: list[Path],
     master_bias: np.ndarray,
@@ -42,7 +66,7 @@ def stack_band(
         reduced = reduce_image(file_path, master_bias, master_flat)
         images.append(align_to_reference(reduced, reference))
 
-    return np.median(images, axis=0)
+    return median_stack(images, object_files, "calibrated object frames")
 
 
 def stack_science_band(object_files: list[Path], reference: np.ndarray) -> np.ndarray:
@@ -54,7 +78,8 @@ def stack_science_band(object_files: list[Path], reference: np.ndarray) -> np.nd
         image = read_fits_data(file_path)
         images.append(align_to_reference(image, reference))
 
-    return np.median(images, axis=0)
+    images = crop_to_common_shape(images)
+    return median_stack(images, object_files, "quick RGB object frames")
 
 
 def subtract_sky_background(image: np.ndarray) -> np.ndarray:
@@ -87,10 +112,11 @@ def run_rgb_reduction(
         for band in ("R", "V", "B")
     }
 
+    red, green, blue = crop_to_common_shape([stacked["R"], stacked["V"], stacked["B"]])
     rgb = make_lupton_rgb(
-        subtract_sky_background(stacked["R"]),
-        subtract_sky_background(stacked["V"]),
-        subtract_sky_background(stacked["B"]),
+        subtract_sky_background(red),
+        subtract_sky_background(green),
+        subtract_sky_background(blue),
         stretch=stretch,
         Q=q_value,
     )
@@ -120,10 +146,11 @@ def run_quick_rgb(
         for band in ("R", "V", "B")
     }
 
+    red, green, blue = crop_to_common_shape([stacked["R"], stacked["V"], stacked["B"]])
     rgb = make_lupton_rgb(
-        subtract_sky_background(stacked["R"]),
-        subtract_sky_background(stacked["V"]),
-        subtract_sky_background(stacked["B"]),
+        subtract_sky_background(red),
+        subtract_sky_background(green),
+        subtract_sky_background(blue),
         stretch=stretch,
         Q=q_value,
     )

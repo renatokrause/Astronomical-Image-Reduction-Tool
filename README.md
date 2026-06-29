@@ -111,4 +111,5 @@ In quick RGB mode:
 - The first version generates RGB images from the `R`, `V` and `B` filters.
 - The `I` filter is scanned, but is not yet used in the RGB composition.
 - Quick RGB mode does not perform bias or flat calibration. It is useful when only science/object frames are available.
+- Quick RGB mode automatically crops slightly different image dimensions to the smallest common area before stacking.
 - Individual visual inspection will be added in a future version.
