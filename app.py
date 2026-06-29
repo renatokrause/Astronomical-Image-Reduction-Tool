@@ -237,6 +237,7 @@ class ReductionApp(tk.Tk):
         self.object_name = tk.StringVar(value="object")
         self.alignment_mode = tk.StringVar(value=ALIGNMENT_AUTOMATIC)
         self.status = tk.StringVar(value="Select the input and output folders to begin.")
+        self.progress = tk.DoubleVar(value=0.0)
 
         self._build_layout()
         self._bind_field_changes()
@@ -275,6 +276,7 @@ class ReductionApp(tk.Tk):
         self.style.configure("Treeview", background=FIELD_BG, foreground=TEXT, fieldbackground=FIELD_BG, bordercolor=BORDER, borderwidth=0, relief="flat", rowheight=30)
         self.style.configure("Treeview.Heading", background=PANEL_BG, foreground=MUTED_TEXT, bordercolor=BORDER, borderwidth=0, relief="flat")
         self.style.configure("TButton", background=FIELD_BG, foreground=TEXT, bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, padding=(14, 7), relief="flat")
+        self.style.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor=FIELD_BG, bordercolor=BORDER, lightcolor=ACCENT, darkcolor=ACCENT)
         self.style.map("TButton", background=[("active", "#1a2540"), ("disabled", "#151b2b")], foreground=[("disabled", "#64708d")])
         self.style.map("TCombobox", fieldbackground=[("readonly", FIELD_BG)], foreground=[("readonly", TEXT)], background=[("readonly", FIELD_BG)])
         self.style.configure("Primary.TButton", background=ACCENT, foreground="#ffffff", font=button_font, padding=(18, 10), bordercolor=ACCENT, relief="flat")
@@ -384,10 +386,18 @@ class ReductionApp(tk.Tk):
         self.tree.column("object", width=120, anchor="center")
         self.tree.grid(row=0, column=0, sticky="nsew")
 
-        log_frame = ttk.LabelFrame(body, text="Progress", padding=8)
-        log_frame.grid(row=1, column=0, sticky="ew", pady=(12, 0))
-        log_frame.columnconfigure(0, weight=1)
-        ttk.Label(log_frame, textvariable=self.status, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        status_frame = ttk.LabelFrame(body, text="Status", padding=8)
+        status_frame.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        status_frame.columnconfigure(0, weight=1)
+        ttk.Label(status_frame, textvariable=self.status, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        self.progress_bar = ttk.Progressbar(
+            status_frame,
+            variable=self.progress,
+            maximum=100,
+            mode="determinate",
+            style="Horizontal.TProgressbar",
+        )
+        self.progress_bar.grid(row=1, column=0, sticky="ew", pady=(8, 0))
 
         self._reset_table()
 
@@ -555,6 +565,13 @@ class ReductionApp(tk.Tk):
     def set_status(self, message: str) -> None:
         self.after(0, self.status.set, message)
 
+    def set_progress(self, value: float) -> None:
+        self.after(0, self.progress.set, max(0.0, min(100.0, value)))
+
+    def update_progress(self, value: float, message: str) -> None:
+        self.after(0, self.status.set, message)
+        self.set_progress(value)
+
     def show_info(self, title: str, message: str) -> None:
         self.after(0, messagebox.showinfo, title, message)
 
@@ -590,16 +607,19 @@ class ReductionApp(tk.Tk):
 
     def open_manual_alignment(self, result: object) -> None:
         self.status.set("Manual alignment ready. Adjust the preview, then save the image.")
+        self.progress.set(96)
         ManualAlignmentWindow(self, result)
 
     def on_manual_alignment_saved(self, result: object, offsets: dict[str, tuple[float, float]]) -> None:
         alignment_summary = self.format_alignment_summary(result)
         manual_summary = self.format_manual_offsets(offsets)
         message = f"Image saved to:\n{result.output_file}\n\n{alignment_summary}\nManual offsets: {manual_summary}."
+        self.progress.set(100)
         self.status.set(f"Image saved to: {result.output_file}. Manual offsets: {manual_summary}.")
         messagebox.showinfo("Processing complete", message)
 
     def on_manual_alignment_cancelled(self) -> None:
+        self.progress.set(0)
         self.status.set("Manual alignment cancelled. No image was saved.")
 
     def run_reduction(self) -> None:
@@ -608,23 +628,28 @@ class ReductionApp(tk.Tk):
             paths = self._project_paths()
             alignment_mode = self.alignment_mode.get()
 
+            self.set_progress(0)
             self.set_status("Processing bias, flats, alignment and RGB composition...")
             result = run_reduction(
                 paths=paths,
                 object_name=object_name,
                 alignment_mode=alignment_mode,
+                progress_callback=self.update_progress,
             )
 
             if alignment_mode == ALIGNMENT_MANUAL:
                 self.after(0, self.open_manual_alignment, result)
                 return
 
+            self.update_progress(98, "Saving output image")
             save_rgb_image(result.rgb, result.output_file)
+            self.set_progress(100)
 
             alignment_summary = self.format_alignment_summary(result)
             self.set_status(f"Image saved to: {result.output_file}. {alignment_summary}")
             self.show_info("Processing complete", f"Image saved to:\n{result.output_file}\n\n{alignment_summary}")
         except Exception as exc:
+            self.set_progress(0)
             self.set_status("Processing failed.")
             self.show_error("Processing error", str(exc))
 

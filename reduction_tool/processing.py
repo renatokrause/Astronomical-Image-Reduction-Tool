@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -15,6 +16,7 @@ ALIGNMENT_NONE = "none"
 ALIGNMENT_AUTOMATIC = "automatic"
 ALIGNMENT_MANUAL = "manual"
 ALIGNMENT_MODES = (ALIGNMENT_NONE, ALIGNMENT_AUTOMATIC, ALIGNMENT_MANUAL)
+ProgressCallback = Callable[[float, str], None]
 
 
 @dataclass
@@ -127,14 +129,24 @@ def stack_band(
     master_bias: np.ndarray,
     master_flat: np.ndarray,
     reference: np.ndarray,
+    progress_callback: ProgressCallback | None = None,
+    progress_start: float = 0.0,
+    progress_end: float = 1.0,
+    band: str = "",
 ) -> np.ndarray:
     if not object_files:
         raise ValueError("No object images were found for this filter.")
 
     images = []
-    for file_path in object_files:
+    total = len(object_files)
+    for index, file_path in enumerate(object_files, start=1):
         reduced = reduce_image(file_path, master_bias, master_flat)
         images.append(align_to_reference(reduced, reference))
+        if progress_callback:
+            fraction = index / total
+            progress = progress_start + (progress_end - progress_start) * fraction
+            label = f"Stacking {band}-band image {index} of {total}" if band else f"Stacking image {index} of {total}"
+            progress_callback(progress, label)
 
     return np.median(images, axis=0)
 
@@ -212,13 +224,20 @@ def run_reduction(
     stretch: float = 5,
     q_value: float = 8,
     alignment_mode: str = ALIGNMENT_AUTOMATIC,
+    progress_callback: ProgressCallback | None = None,
 ) -> ReductionResult:
     paths.output_dir.mkdir(parents=True, exist_ok=True)
 
     if alignment_mode not in ALIGNMENT_MODES:
         raise ValueError(f"Unsupported alignment mode: {alignment_mode}.")
 
+    def report(progress: float, message: str) -> None:
+        if progress_callback:
+            progress_callback(progress, message)
+
+    report(2, "Scanning input folders")
     inventory = scan_project(paths)
+    report(8, "Creating master bias")
     master_bias = create_master_bias(inventory.bias)
 
     available_bands = [
@@ -229,24 +248,44 @@ def run_reduction(
     if not available_bands:
         raise ValueError("No processable object filters were found. Need at least one of R, V or B with matching flats.")
 
-    master_flats = {
-        band: create_master_flat(inventory.flats[band], master_bias)
-        for band in available_bands
-    }
+    master_flats = {}
+    flat_start = 12.0
+    flat_end = 28.0
+    for index, band in enumerate(available_bands, start=1):
+        report(flat_start + (flat_end - flat_start) * ((index - 1) / len(available_bands)), f"Creating {band}-band master flat")
+        master_flats[band] = create_master_flat(inventory.flats[band], master_bias)
+    report(flat_end, "Master flats ready")
 
     reference_band = "V" if "V" in available_bands else available_bands[0]
+    report(30, f"Preparing {reference_band}-band alignment reference")
     reference = reduce_image(
         inventory.objects[reference_band][0],
         master_bias,
         master_flats[reference_band],
     )
-    stacked = {
-        band: stack_band(inventory.objects[band], master_bias, master_flats[band], reference)
-        for band in available_bands
-    }
+
+    stacked = {}
+    stack_start = 34.0
+    stack_end = 76.0
+    band_span = (stack_end - stack_start) / len(available_bands)
+    for index, band in enumerate(available_bands):
+        start = stack_start + band_span * index
+        end = start + band_span
+        report(start, f"Stacking {band}-band images")
+        stacked[band] = stack_band(
+            inventory.objects[band],
+            master_bias,
+            master_flats[band],
+            reference,
+            progress_callback=progress_callback,
+            progress_start=start,
+            progress_end=end,
+            band=band,
+        )
 
     channel_alignment: dict[str, ChannelAlignment]
     if alignment_mode in (ALIGNMENT_AUTOMATIC, ALIGNMENT_MANUAL) and len(stacked) > 1:
+        report(82, "Aligning final color bands")
         stacked, channel_alignment = align_stacked_channels(stacked, reference_band)
     else:
         channel_alignment = {
@@ -254,7 +293,9 @@ def run_reduction(
             for band in stacked
         }
 
+    report(90, "Composing RGB image")
     rgb = create_available_channel_rgb(stacked, stretch, q_value)
+    report(96, "Preparing output image")
 
     output_file = paths.output_dir / f"{object_name}_reduced.png"
     return ReductionResult(
