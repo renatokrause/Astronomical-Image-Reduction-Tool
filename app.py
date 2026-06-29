@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import tempfile
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font, messagebox, ttk
 
-import matplotlib.pyplot as plt
 from PIL import Image, ImageTk
 
 from reduction_tool.io import find_fits_files, group_by_filter, scan_project
@@ -38,8 +36,8 @@ class ManualAlignmentWindow(tk.Toplevel):
         self.parent = parent
         self.result = result
         self.title("Manual band alignment")
-        self.geometry("980x760")
-        self.minsize(860, 620)
+        self.geometry("1180x820")
+        self.minsize(900, 640)
         self.configure_app_icon()
         self.configure(bg=DARK_BG)
 
@@ -50,23 +48,22 @@ class ManualAlignmentWindow(tk.Toplevel):
         self.dx = tk.DoubleVar(value=0.0)
         self.dy = tk.DoubleVar(value=0.0)
         self.status = tk.StringVar(value="Adjust a channel and update the preview.")
-        self.preview_tempdir = tempfile.TemporaryDirectory()
-        self.preview_file = Path(self.preview_tempdir.name) / "manual_alignment_preview.png"
-        self.preview_image: tk.PhotoImage | None = None
+        self.preview_pil_image: Image.Image | None = None
+        self.preview_image: ImageTk.PhotoImage | None = None
 
         self._build_layout()
         self.protocol("WM_DELETE_WINDOW", self.cancel)
-        self.bind("<Left>", lambda _event: self.nudge(-self.step.get(), 0.0))
-        self.bind("<Right>", lambda _event: self.nudge(self.step.get(), 0.0))
-        self.bind("<Up>", lambda _event: self.nudge(0.0, self.step.get()))
-        self.bind("<Down>", lambda _event: self.nudge(0.0, -self.step.get()))
-        self.bind("<Shift-Left>", lambda _event: self.nudge(-10.0, 0.0))
-        self.bind("<Shift-Right>", lambda _event: self.nudge(10.0, 0.0))
-        self.bind("<Shift-Up>", lambda _event: self.nudge(0.0, 10.0))
-        self.bind("<Shift-Down>", lambda _event: self.nudge(0.0, -10.0))
+        self.bind_shortcuts()
         self.render_preview()
+        self.after(50, self.maximize_window)
         self.focus_set()
         self.grab_set()
+
+    def maximize_window(self) -> None:
+        try:
+            self.state("zoomed")
+        except tk.TclError:
+            self.attributes("-zoomed", True)
 
     def configure_app_icon(self) -> None:
         try:
@@ -74,6 +71,16 @@ class ManualAlignmentWindow(tk.Toplevel):
                 self.iconphoto(True, self.parent.app_icon_image)
         except tk.TclError:
             pass
+
+    def bind_shortcuts(self) -> None:
+        self.bind_all("<Left>", lambda _event: self.handle_key_nudge(-self.step.get(), 0.0))
+        self.bind_all("<Right>", lambda _event: self.handle_key_nudge(self.step.get(), 0.0))
+        self.bind_all("<Up>", lambda _event: self.handle_key_nudge(0.0, self.step.get()))
+        self.bind_all("<Down>", lambda _event: self.handle_key_nudge(0.0, -self.step.get()))
+        self.bind_all("<Shift-Left>", lambda _event: self.handle_key_nudge(-10.0, 0.0))
+        self.bind_all("<Shift-Right>", lambda _event: self.handle_key_nudge(10.0, 0.0))
+        self.bind_all("<Shift-Up>", lambda _event: self.handle_key_nudge(0.0, 10.0))
+        self.bind_all("<Shift-Down>", lambda _event: self.handle_key_nudge(0.0, -10.0))
 
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -84,8 +91,14 @@ class ManualAlignmentWindow(tk.Toplevel):
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
 
-        self.preview_label = ttk.Label(preview_frame, anchor="center", style="Preview.TLabel")
-        self.preview_label.grid(row=0, column=0, sticky="nsew")
+        self.preview_canvas = tk.Canvas(
+            preview_frame,
+            bg=PANEL_BG,
+            highlightthickness=0,
+            bd=0,
+        )
+        self.preview_canvas.grid(row=0, column=0, sticky="nsew")
+        self.preview_canvas.bind("<Configure>", self.on_preview_resized)
 
         controls = ttk.Frame(self, padding=(12, 0, 12, 12))
         controls.grid(row=1, column=0, sticky="ew")
@@ -105,7 +118,7 @@ class ManualAlignmentWindow(tk.Toplevel):
         channel_picker.bind("<<ComboboxSelected>>", self.on_channel_selected)
 
         ttk.Label(controls, text="Step").grid(row=0, column=2, sticky="w")
-        ttk.Spinbox(controls, from_=0.1, to=50.0, increment=0.5, width=7, textvariable=self.step).grid(
+        self.create_number_spinbox(controls, self.step, 0.1, 50.0, 0.5, 7).grid(
             row=0,
             column=3,
             sticky="w",
@@ -113,14 +126,14 @@ class ManualAlignmentWindow(tk.Toplevel):
         )
 
         ttk.Label(controls, text="X").grid(row=0, column=4, sticky="w")
-        ttk.Spinbox(controls, from_=-500.0, to=500.0, increment=0.5, width=8, textvariable=self.dx).grid(
+        self.create_number_spinbox(controls, self.dx, -500.0, 500.0, 0.5, 8).grid(
             row=0,
             column=5,
             sticky="w",
             padx=(6, 10),
         )
         ttk.Label(controls, text="Y").grid(row=0, column=6, sticky="w")
-        ttk.Spinbox(controls, from_=-500.0, to=500.0, increment=0.5, width=8, textvariable=self.dy).grid(
+        self.create_number_spinbox(controls, self.dy, -500.0, 500.0, 0.5, 8).grid(
             row=0,
             column=7,
             sticky="w",
@@ -142,7 +155,40 @@ class ManualAlignmentWindow(tk.Toplevel):
         ttk.Button(actions, text="Save image", command=self.save_image).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Cancel", command=self.cancel).pack(side="left")
 
-        ttk.Label(self, textvariable=self.status, padding=(12, 0, 12, 12)).grid(row=2, column=0, sticky="ew")
+        ttk.Label(self, textvariable=self.status, style="Muted.TLabel", padding=(12, 0, 12, 12)).grid(
+            row=2,
+            column=0,
+            sticky="ew",
+        )
+
+    def create_number_spinbox(
+        self,
+        parent: ttk.Frame,
+        variable: tk.DoubleVar,
+        from_value: float,
+        to_value: float,
+        increment: float,
+        width: int,
+    ) -> tk.Spinbox:
+        return tk.Spinbox(
+            parent,
+            from_=from_value,
+            to=to_value,
+            increment=increment,
+            width=width,
+            textvariable=variable,
+            bg=FIELD_BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            buttonbackground=FIELD_BG,
+            disabledbackground=FIELD_BG,
+            readonlybackground=FIELD_BG,
+            highlightbackground=BORDER,
+            highlightcolor=ACCENT,
+            highlightthickness=1,
+            relief="flat",
+            bd=0,
+        )
 
     def on_channel_selected(self, _event: object | None = None) -> None:
         band = self.selected_band.get()
@@ -161,6 +207,10 @@ class ManualAlignmentWindow(tk.Toplevel):
     def update_current_channel(self) -> None:
         self.store_current_channel()
         self.render_preview()
+
+    def handle_key_nudge(self, dx: float, dy: float) -> str:
+        self.nudge(dx, dy)
+        return "break"
 
     def nudge(self, dx: float, dy: float) -> None:
         self.dx.set(round(float(self.dx.get()) + dx, 2))
@@ -185,21 +235,36 @@ class ManualAlignmentWindow(tk.Toplevel):
     def render_preview(self) -> None:
         shifted = apply_channel_offsets(self.result.stacked, self.current_offsets())
         rgb = create_available_channel_rgb(shifted, stretch=5, q_value=8)
-
-        fig, ax = plt.subplots(figsize=(8.5, 5.8), dpi=100, frameon=False)
-        ax.imshow(rgb, origin="lower")
-        ax.axis("off")
-        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-        fig.savefig(self.preview_file, bbox_inches="tight", pad_inches=0, dpi=100)
-        plt.close(fig)
-
-        self.preview_image = tk.PhotoImage(file=self.preview_file)
-        self.preview_label.configure(image=self.preview_image)
+        self.preview_pil_image = Image.fromarray(rgb).convert("RGB")
+        self.display_preview_image()
         offsets = ", ".join(
             f"{band}: x={values[0]:.2f}, y={values[1]:.2f}"
             for band, values in self.offsets.items()
         )
         self.status.set(f"Current manual offsets: {offsets}")
+
+    def on_preview_resized(self, _event: tk.Event) -> None:
+        self.display_preview_image()
+
+    def display_preview_image(self) -> None:
+        if self.preview_pil_image is None:
+            return
+
+        canvas_width = max(1, self.preview_canvas.winfo_width())
+        canvas_height = max(1, self.preview_canvas.winfo_height())
+        image_width, image_height = self.preview_pil_image.size
+        scale = min(canvas_width / image_width, canvas_height / image_height)
+        display_width = max(1, int(image_width * scale))
+        display_height = max(1, int(image_height * scale))
+        preview = self.preview_pil_image.resize((display_width, display_height), Image.Resampling.LANCZOS)
+        self.preview_image = ImageTk.PhotoImage(preview)
+        self.preview_canvas.delete("all")
+        self.preview_canvas.create_image(
+            canvas_width // 2,
+            canvas_height // 2,
+            image=self.preview_image,
+            anchor="center",
+        )
 
     def save_image(self) -> None:
         self.store_current_channel()
@@ -217,7 +282,8 @@ class ManualAlignmentWindow(tk.Toplevel):
         self.destroy()
 
     def cleanup(self) -> None:
-        self.preview_tempdir.cleanup()
+        for sequence in ("<Left>", "<Right>", "<Up>", "<Down>", "<Shift-Left>", "<Shift-Right>", "<Shift-Up>", "<Shift-Down>"):
+            self.unbind_all(sequence)
 
 
 class ReductionApp(tk.Tk):
@@ -465,6 +531,8 @@ class ReductionApp(tk.Tk):
             variable.trace_add("write", self.on_field_changed)
 
     def on_field_changed(self, *_args: object) -> None:
+        if hasattr(self, "progress"):
+            self.progress.set(0)
         self.update_generate_button_state()
 
     def _project_paths(self) -> ProjectPaths:
