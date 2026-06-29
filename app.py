@@ -924,7 +924,7 @@ class ReductionApp(tk.Tk):
                 sticky="e",
                 padx=(0, 18),
             )
-            text_stack = tk.Frame(brand, bg=PANEL_BG, width=360, height=96)
+            text_stack = tk.Frame(brand, bg=PANEL_BG, width=360, height=108)
             text_stack.grid(row=0, column=1, sticky="w")
             text_stack.grid_propagate(False)
 
