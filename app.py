@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import threading
+import webbrowser
 
 import numpy as np
 import tkinter as tk
@@ -877,6 +878,9 @@ class ReductionApp(tk.Tk):
         except (tk.TclError, OSError):
             pass
 
+    def open_author_github(self, _event: object | None = None) -> None:
+        webbrowser.open_new_tab("https://github.com/ericBK26/")
+
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
@@ -925,7 +929,7 @@ class ReductionApp(tk.Tk):
                 text="Astronomical",
                 bg=PANEL_BG,
                 fg="#d9e4ff",
-                font=("Segoe UI", 28, "bold"),
+                font=("Segoe UI", 26, "bold"),
             ).grid(row=0, column=1, sticky="sw")
             tk.Label(
                 brand,
@@ -939,15 +943,18 @@ class ReductionApp(tk.Tk):
                 text="Author: Eric Bairros Krause",
                 bg=PANEL_BG,
                 fg=MUTED_TEXT,
-                font=("Segoe UI", 6),
-            ).grid(row=2, column=1, sticky="nw", pady=(8, 0))
-            tk.Label(
+                font=("Segoe UI", 9),
+            ).grid(row=2, column=1, sticky="nw", pady=(4, 0))
+            author_link = tk.Label(
                 brand,
                 text="github.com/ericBK26 | ericbairroskrause@gmail.com",
                 bg=PANEL_BG,
                 fg=MUTED_TEXT,
-                font=("Segoe UI", 6),
-            ).grid(row=3, column=1, sticky="nw")
+                font=("Segoe UI", 9),
+                cursor="hand2",
+            )
+            author_link.grid(row=3, column=1, sticky="nw", pady=(0, 0))
+            author_link.bind("<Button-1>", self.open_author_github)
 
         actions = ttk.Frame(self, padding=(16, 14, 16, 14))
         actions.grid(row=1, column=0, sticky="ew")
