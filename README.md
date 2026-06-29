@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/airt-logo.png" alt="Astronomical Image Reduction Tool logo" width="260">
+  <img src="assets/airt-logo.svg" alt="Astronomical Image Reduction Tool logo" width="320">
 </p>
 
 # Astronomical Image Reduction Tool

@@ -238,6 +238,7 @@ class ReductionApp(tk.Tk):
     def configure_app_icon(self) -> None:
         assets_dir = Path(__file__).resolve().parent / "assets"
         icon_file = assets_dir / "airt-icon.ico"
+        icon_png = assets_dir / "airt-icon.png"
         logo_file = assets_dir / "airt-logo.png"
 
         try:
@@ -247,9 +248,15 @@ class ReductionApp(tk.Tk):
             pass
 
         try:
-            if logo_file.exists():
-                self.app_icon_image = tk.PhotoImage(file=logo_file)
+            if icon_png.exists():
+                self.app_icon_image = tk.PhotoImage(file=icon_png)
                 self.iconphoto(True, self.app_icon_image)
+        except tk.TclError:
+            pass
+
+        try:
+            if logo_file.exists():
+                self.app_logo_image = tk.PhotoImage(file=logo_file)
         except tk.TclError:
             pass
 
@@ -285,8 +292,8 @@ class ReductionApp(tk.Tk):
         self.alignment_mode_picker.set("Automatic band alignment")
         self.alignment_mode_picker.bind("<<ComboboxSelected>>", self.on_alignment_mode_selected)
 
-        if hasattr(self, "app_icon_image"):
-            self.header_logo_image = self.app_icon_image.subsample(6, 6)
+        if hasattr(self, "app_logo_image"):
+            self.header_logo_image = self.app_logo_image.subsample(6, 6)
             ttk.Label(header, image=self.header_logo_image).grid(
                 row=0,
                 column=3,
