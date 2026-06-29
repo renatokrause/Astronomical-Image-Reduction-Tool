@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/airt-logo.png" alt="Astronomical Image Reduction Tool logo" width="260">
+</p>
+
 # Astronomical Image Reduction Tool
 
 Python desktop application for calibrating, aligning, stacking and generating RGB images from FITS files.

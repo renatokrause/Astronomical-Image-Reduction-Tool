@@ -16,6 +16,7 @@ class ReductionApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Astronomical Image Reduction Tool")
+        self.configure_app_icon()
         self.geometry("820x560")
         self.minsize(760, 500)
 
@@ -37,6 +38,24 @@ class ReductionApp(tk.Tk):
         except tk.TclError:
             self.attributes("-zoomed", True)
 
+    def configure_app_icon(self) -> None:
+        assets_dir = Path(__file__).resolve().parent / "assets"
+        icon_file = assets_dir / "airt-icon.ico"
+        logo_file = assets_dir / "airt-logo.png"
+
+        try:
+            if icon_file.exists():
+                self.iconbitmap(icon_file)
+        except tk.TclError:
+            pass
+
+        try:
+            if logo_file.exists():
+                self.app_icon_image = tk.PhotoImage(file=logo_file)
+                self.iconphoto(True, self.app_icon_image)
+        except tk.TclError:
+            pass
+
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
@@ -52,6 +71,16 @@ class ReductionApp(tk.Tk):
 
         ttk.Label(header, text="Object name").grid(row=4, column=0, sticky="w", pady=(10, 0))
         ttk.Entry(header, textvariable=self.object_name).grid(row=4, column=1, sticky="ew", padx=8, pady=(10, 0))
+
+        if hasattr(self, "app_icon_image"):
+            self.header_logo_image = self.app_icon_image.subsample(6, 6)
+            ttk.Label(header, image=self.header_logo_image).grid(
+                row=0,
+                column=3,
+                rowspan=5,
+                padx=(18, 0),
+                sticky="ne",
+            )
 
         actions = ttk.Frame(self, padding=(16, 0, 16, 12))
         actions.grid(row=1, column=0, sticky="ew")
