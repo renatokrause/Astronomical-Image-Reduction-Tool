@@ -29,6 +29,13 @@ class ReductionApp(tk.Tk):
         self._build_layout()
         self._bind_field_changes()
         self.update_generate_button_state()
+        self.maximize_window()
+
+    def maximize_window(self) -> None:
+        try:
+            self.state("zoomed")
+        except tk.TclError:
+            self.attributes("-zoomed", True)
 
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
