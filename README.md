@@ -8,6 +8,20 @@ Python desktop application for calibrating, aligning, stacking and generating RG
 
 This project was inspired by an earlier Colab workflow, then reorganized as a local desktop tool with a graphical interface.
 
+## Screenshots
+
+### Main Window
+
+![Main window](assets/screenshots/main-window.png)
+
+### Object File Filter
+
+![Object file filter](assets/screenshots/object-file-filter.png)
+
+### Manual Band Alignment
+
+![Manual band alignment](assets/screenshots/manual-band-alignment.png)
+
 ## Author
 
 - Primary author: [Eric Bairros Krause](https://github.com/ericBK26/)
