@@ -28,6 +28,22 @@ class ProjectPaths:
             output_dir=base_dir / "output",
         )
 
+    @classmethod
+    def from_folders(
+        cls,
+        bias_dir: Path,
+        flat_dir: Path,
+        object_dir: Path,
+        output_dir: Path,
+    ) -> "ProjectPaths":
+        return cls(
+            base_dir=object_dir.parent,
+            bias_dir=bias_dir,
+            flat_dir=flat_dir,
+            object_dir=object_dir,
+            output_dir=output_dir,
+        )
+
 
 @dataclass
 class FileInventory:

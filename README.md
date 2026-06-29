@@ -6,7 +6,7 @@ This project was inspired by an earlier Colab workflow, then reorganized as a lo
 
 ## Expected Folder Structure
 
-Select a project folder containing:
+Select the folders used by the reduction:
 
 ```text
 my_project/
@@ -20,9 +20,10 @@ my_project/
     *_B_*.fits
     *_V_*.fits
     *_R_*.fits
+  output/
 ```
 
-The object folder can also use the target name, for example:
+The object folder can also use the target name, and each folder is selected independently in the app:
 
 ```text
 my_project/
@@ -31,9 +32,10 @@ my_project/
   M104/
   M8/
   M83/
+  output/
 ```
 
-In this case, select the project folder and choose the desired target in the `Object folder` field.
+In this case, select `bias` as the Bias folder, `flat` as the Flat folder, one target folder such as `M104` as the Object folder, and `output` as the Output folder.
 
 The tool creates this folder automatically:
 
@@ -69,21 +71,22 @@ If the environment needs to be recreated, double-click `setup_environment.bat`.
 
 ## What The Program Does
 
-1. Finds FITS files in the `bias`, `flat` and `object` folders.
-2. Lets the user choose which object folder should be processed.
+1. Finds FITS files in the selected bias, flat and object folders.
+2. Counts the available files before processing.
 3. Groups flats and object images by the `B`, `V`, `R` and `I` filters.
 4. Creates the master bias.
-5. Creates master flats for the `B`, `V` and `R` filters.
+5. Creates master flats for any available `B`, `V` and `R` filters.
 6. Calibrates the object images with bias and flat correction.
-7. Uses one `V` image as the alignment reference.
+7. Uses one `V` image as the alignment reference when available, otherwise uses another available filter.
 8. Aligns and stacks the images for each filter.
 9. Subtracts the sky background.
-10. Generates the final RGB image with `make_lupton_rgb`.
+10. Generates the final image with the available color channels.
 11. Saves the PNG result in the `output` folder.
 
 ## Notes
 
 - File names must identify the filter, for example `_B_`, `_V_`, `_R_`, or end with `B.FITS`, `V.FITS`, `R.FITS`.
-- The first version generates RGB images from the `R`, `V` and `B` filters.
+- `R`, `V` and `B` are mapped to red, green and blue. If only one or two filters are available, the missing channels are left empty.
 - The `I` filter is scanned, but is not yet used in the RGB composition.
+- `Scan files only` counts and classifies FITS files by folder and filter. It does not create masters, reduce images, align images or save output files.
 - Individual visual inspection will be added in a future version.
