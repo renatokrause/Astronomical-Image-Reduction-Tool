@@ -920,27 +920,34 @@ class ReductionApp(tk.Tk):
                 sticky="e",
                 padx=(0, 18),
             )
-            ttk.Label(brand, text="Astronomical", style="BrandTitle.TLabel").grid(
-                row=0,
-                column=1,
-                sticky="sw",
-            )
-            ttk.Label(brand, text="Image Reduction Tool", style="BrandSubtitle.TLabel").grid(
-                row=1,
-                column=1,
-                sticky="nw",
-            )
-            ttk.Label(brand, text="Author: Eric Bairros Krause", style="BrandAuthor.TLabel").grid(
-                row=2,
-                column=1,
-                sticky="nw",
-                pady=(6, 0),
-            )
-            ttk.Label(brand, text="github.com/ericBK26 | ericbairroskrause@gmail.com", style="BrandAuthor.TLabel").grid(
-                row=3,
-                column=1,
-                sticky="nw",
-            )
+            tk.Label(
+                brand,
+                text="Astronomical",
+                bg=PANEL_BG,
+                fg="#d9e4ff",
+                font=("Segoe UI", 28, "bold"),
+            ).grid(row=0, column=1, sticky="sw")
+            tk.Label(
+                brand,
+                text="Image Reduction Tool",
+                bg=PANEL_BG,
+                fg="#55c7ff",
+                font=("Segoe UI", 16, "bold"),
+            ).grid(row=1, column=1, sticky="nw")
+            tk.Label(
+                brand,
+                text="Author: Eric Bairros Krause",
+                bg=PANEL_BG,
+                fg=MUTED_TEXT,
+                font=("Segoe UI", 6),
+            ).grid(row=2, column=1, sticky="nw", pady=(8, 0))
+            tk.Label(
+                brand,
+                text="github.com/ericBK26 | ericbairroskrause@gmail.com",
+                bg=PANEL_BG,
+                fg=MUTED_TEXT,
+                font=("Segoe UI", 6),
+            ).grid(row=3, column=1, sticky="nw")
 
         actions = ttk.Frame(self, padding=(16, 14, 16, 14))
         actions.grid(row=1, column=0, sticky="ew")
