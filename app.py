@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
-from tkinter import font
+from tkinter import filedialog, font, messagebox, ttk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
 
 from reduction_tool.io import find_fits_files, group_by_filter, scan_project
 from reduction_tool.models import FILTERS, ProjectPaths
 from reduction_tool.plotting import save_rgb_image
-from reduction_tool.processing import run_reduction
+from reduction_tool.processing import ALIGNMENT_AUTOMATIC, ALIGNMENT_NONE, run_reduction
 
 
 class ReductionApp(tk.Tk):
@@ -25,6 +24,7 @@ class ReductionApp(tk.Tk):
         self.object_dir = tk.StringVar()
         self.output_dir = tk.StringVar()
         self.object_name = tk.StringVar(value="object")
+        self.alignment_mode = tk.StringVar(value=ALIGNMENT_AUTOMATIC)
         self.status = tk.StringVar(value="Select the input and output folders to begin.")
 
         self._build_layout()
@@ -72,12 +72,27 @@ class ReductionApp(tk.Tk):
         ttk.Label(header, text="Object name").grid(row=4, column=0, sticky="w", pady=(10, 0))
         ttk.Entry(header, textvariable=self.object_name).grid(row=4, column=1, sticky="ew", padx=8, pady=(10, 0))
 
+        ttk.Label(header, text="Alignment mode").grid(row=5, column=0, sticky="w", pady=(10, 0))
+        alignment_options = {
+            "Automatic band alignment": ALIGNMENT_AUTOMATIC,
+            "No band adjustment": ALIGNMENT_NONE,
+        }
+        self.alignment_mode_labels = alignment_options
+        self.alignment_mode_picker = ttk.Combobox(
+            header,
+            state="readonly",
+            values=tuple(alignment_options.keys()),
+        )
+        self.alignment_mode_picker.grid(row=5, column=1, sticky="ew", padx=8, pady=(10, 0))
+        self.alignment_mode_picker.set("Automatic band alignment")
+        self.alignment_mode_picker.bind("<<ComboboxSelected>>", self.on_alignment_mode_selected)
+
         if hasattr(self, "app_icon_image"):
             self.header_logo_image = self.app_icon_image.subsample(6, 6)
             ttk.Label(header, image=self.header_logo_image).grid(
                 row=0,
                 column=3,
-                rowspan=5,
+                rowspan=6,
                 padx=(18, 0),
                 sticky="ne",
             )
@@ -118,6 +133,10 @@ class ReductionApp(tk.Tk):
         ttk.Label(log_frame, textvariable=self.status).grid(row=0, column=0, sticky="w")
 
         self._reset_table()
+
+    def on_alignment_mode_selected(self, _event: object | None = None) -> None:
+        selected = self.alignment_mode_picker.get()
+        self.alignment_mode.set(self.alignment_mode_labels.get(selected, ALIGNMENT_AUTOMATIC))
 
     def _add_folder_picker(
         self,
@@ -285,18 +304,41 @@ class ReductionApp(tk.Tk):
     def show_error(self, title: str, message: str) -> None:
         self.after(0, messagebox.showerror, title, message)
 
+    def format_alignment_summary(self, result: object) -> str:
+        if getattr(result, "alignment_mode", ALIGNMENT_NONE) == ALIGNMENT_NONE:
+            return "Band alignment: none."
+
+        reference = getattr(result, "alignment_reference", None) or "auto"
+        channel_alignment = getattr(result, "channel_alignment", {})
+        parts = []
+        for band in ("R", "V", "B"):
+            alignment = channel_alignment.get(band)
+            if not alignment:
+                continue
+            if alignment.method in ("reference", "astroalign"):
+                parts.append(f"{band}: {alignment.method}")
+            else:
+                parts.append(f"{band}: {alignment.method} dx={alignment.dx:.2f}, dy={alignment.dy:.2f}")
+        detail = "; ".join(parts) if parts else "no channel shifts needed"
+        return f"Band alignment: automatic, reference {reference}; {detail}."
+
     def run_reduction(self) -> None:
         try:
             object_name = self.object_name.get().strip() or "object"
             paths = self._project_paths()
 
             self.set_status("Processing bias, flats, alignment and RGB composition...")
-            result = run_reduction(paths=paths, object_name=object_name)
+            result = run_reduction(
+                paths=paths,
+                object_name=object_name,
+                alignment_mode=self.alignment_mode.get(),
+            )
 
             save_rgb_image(result.rgb, result.output_file)
 
-            self.set_status(f"Image saved to: {result.output_file}")
-            self.show_info("Processing complete", f"Image saved to:\n{result.output_file}")
+            alignment_summary = self.format_alignment_summary(result)
+            self.set_status(f"Image saved to: {result.output_file}. {alignment_summary}")
+            self.show_info("Processing complete", f"Image saved to:\n{result.output_file}\n\n{alignment_summary}")
         except Exception as exc:
             self.set_status("Processing failed.")
             self.show_error("Processing error", str(exc))

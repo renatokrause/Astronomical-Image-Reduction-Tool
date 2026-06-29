@@ -2,3 +2,5 @@ astropy>=6.0
 astroalign>=2.5
 matplotlib>=3.8
 numpy>=1.26
+scikit-image>=0.22
+scipy>=1.11
