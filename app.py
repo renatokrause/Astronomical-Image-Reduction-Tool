@@ -924,36 +924,52 @@ class ReductionApp(tk.Tk):
                 sticky="e",
                 padx=(0, 18),
             )
+            text_stack = tk.Frame(brand, bg=PANEL_BG, width=360, height=96)
+            text_stack.grid(row=0, column=1, sticky="w")
+            text_stack.grid_propagate(False)
+
             tk.Label(
-                brand,
+                text_stack,
                 text="Astronomical",
                 bg=PANEL_BG,
                 fg="#d9e4ff",
                 font=("Segoe UI", 26, "bold"),
-            ).grid(row=0, column=1, sticky="sw")
+                borderwidth=0,
+                highlightthickness=0,
+                pady=0,
+            ).place(x=0, y=0)
             tk.Label(
-                brand,
+                text_stack,
                 text="Image Reduction Tool",
                 bg=PANEL_BG,
                 fg="#55c7ff",
                 font=("Segoe UI", 16, "bold"),
-            ).grid(row=1, column=1, sticky="nw")
+                borderwidth=0,
+                highlightthickness=0,
+                pady=0,
+            ).place(x=0, y=34)
             tk.Label(
-                brand,
+                text_stack,
                 text="Author: Eric Bairros Krause",
                 bg=PANEL_BG,
                 fg=MUTED_TEXT,
                 font=("Segoe UI", 9),
-            ).grid(row=2, column=1, sticky="nw", pady=(4, 0))
+                borderwidth=0,
+                highlightthickness=0,
+                pady=0,
+            ).place(x=0, y=62)
             author_link = tk.Label(
-                brand,
+                text_stack,
                 text="github.com/ericBK26 | ericbairroskrause@gmail.com",
                 bg=PANEL_BG,
                 fg=MUTED_TEXT,
                 font=("Segoe UI", 9),
+                borderwidth=0,
+                highlightthickness=0,
+                pady=0,
                 cursor="hand2",
             )
-            author_link.grid(row=3, column=1, sticky="nw", pady=(0, 0))
+            author_link.place(x=0, y=76)
             author_link.bind("<Button-1>", self.open_author_github)
 
         actions = ttk.Frame(self, padding=(16, 14, 16, 14))
