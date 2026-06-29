@@ -41,7 +41,7 @@ my_project/
 
 In this case, select `bias` as the Bias folder, `flat` as the Flat folder, one target folder such as `M104` as the Object folder, and `output` as the Output folder.
 
-The tool creates this folder automatically:
+The final PNG is saved in the selected Output folder. If that folder does not exist, the tool creates it automatically:
 
 ```text
 my_project/
@@ -86,7 +86,7 @@ If you want a Windows shortcut with the application icon, run `create_airt_short
 9. Optionally aligns the final stacked bands before RGB composition.
 10. Subtracts the sky background.
 11. Generates the final image with the available color channels.
-12. Saves the PNG result in the `output` folder.
+12. Saves the PNG result in the selected Output folder.
 
 ## Notes
 
