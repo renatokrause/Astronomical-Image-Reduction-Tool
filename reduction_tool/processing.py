@@ -177,47 +177,6 @@ def create_available_channel_rgb(
     )
 
 
-def run_rgb_reduction(
-    base_dir: Path,
-    object_name: str = "object",
-    object_folder: str = "object",
-    stretch: float = 5,
-    q_value: float = 8,
-) -> ReductionResult:
-    paths = ProjectPaths.from_base(base_dir, object_folder=object_folder)
-    paths.output_dir.mkdir(parents=True, exist_ok=True)
-
-    inventory = scan_project(paths)
-    master_bias = create_master_bias(inventory.bias)
-
-    master_flats = {
-        band: create_master_flat(inventory.flats[band], master_bias)
-        for band in ("B", "V", "R")
-    }
-
-    if not inventory.objects["V"]:
-        raise ValueError("At least one V-band image is required as the alignment reference.")
-
-    reference = reduce_image(inventory.objects["V"][0], master_bias, master_flats["V"])
-    stacked = {
-        band: stack_band(inventory.objects[band], master_bias, master_flats[band], reference)
-        for band in ("R", "V", "B")
-    }
-    stacked, channel_alignment = align_stacked_channels(stacked, "V")
-
-    rgb = create_available_channel_rgb(stacked, stretch, q_value)
-
-    output_file = paths.output_dir / f"{object_name}_reduced.png"
-    return ReductionResult(
-        rgb=rgb,
-        stacked=stacked,
-        output_file=output_file,
-        alignment_mode=ALIGNMENT_AUTOMATIC,
-        alignment_reference="V",
-        channel_alignment=channel_alignment,
-    )
-
-
 def run_reduction(
     paths: ProjectPaths,
     object_name: str = "object",

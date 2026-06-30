@@ -11,22 +11,10 @@ FILTERS = ("B", "V", "R", "I")
 class ProjectPaths:
     """Input and output folders used by one reduction project."""
 
-    base_dir: Path
     bias_dir: Path
     flat_dir: Path
     object_dir: Path
     output_dir: Path
-
-    @classmethod
-    def from_base(cls, base_dir: Path, object_folder: str = "object") -> "ProjectPaths":
-        object_folder = object_folder.strip() or "object"
-        return cls(
-            base_dir=base_dir,
-            bias_dir=base_dir / "bias",
-            flat_dir=base_dir / "flat",
-            object_dir=base_dir / object_folder,
-            output_dir=base_dir / "output",
-        )
 
     @classmethod
     def from_folders(
@@ -37,7 +25,6 @@ class ProjectPaths:
         output_dir: Path,
     ) -> "ProjectPaths":
         return cls(
-            base_dir=object_dir.parent,
             bias_dir=bias_dir,
             flat_dir=flat_dir,
             object_dir=object_dir,

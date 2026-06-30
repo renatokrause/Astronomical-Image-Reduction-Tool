@@ -12,7 +12,7 @@ from tkinter import filedialog, font, messagebox, ttk
 from PIL import Image, ImageOps, ImageTk
 
 from reduction_tool.calibration import read_fits_data
-from reduction_tool.io import find_fits_files, group_by_filter, scan_project
+from reduction_tool.io import find_fits_files, group_by_filter
 from reduction_tool.models import FILTERS, ProjectPaths
 from reduction_tool.plotting import save_rgb_image
 from reduction_tool.processing import (
@@ -266,9 +266,6 @@ class ManualAlignmentWindow(tk.Toplevel):
             getattr(self, "dx_spinbox", None),
             getattr(self, "dy_spinbox", None),
         }
-
-    def is_measurement_active(self) -> bool:
-        return self.measure_mode
 
     def zoom_in(self) -> None:
         self.set_zoom(self.zoom_level * 1.25)
@@ -1108,24 +1105,6 @@ class ReductionApp(tk.Tk):
             flat_dir=Path(self.flat_dir.get()),
             object_dir=Path(self.object_dir.get()),
             output_dir=Path(self.output_dir.get()),
-        )
-
-    def scan_files(self) -> None:
-        try:
-            paths = self._project_paths()
-            inventory = scan_project(paths)
-        except Exception as exc:
-            messagebox.showerror("File scan error", str(exc))
-            return
-
-        bias_count = len(inventory.bias)
-        for band, (flat_count, _object_count) in inventory.counts_by_filter().items():
-            object_count = self.object_count_label(band, inventory.objects.get(band, []))
-            self.tree.item(band, values=(bias_count, flat_count, object_count))
-
-        self.status.set(
-            f"Automatic scan complete: {bias_count} bias file(s). "
-            "No images were processed yet."
         )
 
     def scan_files_partial(self) -> None:
