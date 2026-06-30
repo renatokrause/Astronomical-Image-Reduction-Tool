@@ -46,6 +46,7 @@ class ReductionResult:
     background_mask_radius: float = 0.47
     background_mask_softness: float = 0.045
     background_outside_intensity: float = 0.0
+    background_outside_level: float = 0.0
     background_band_corrections: dict[str, dict[str, float | str]] = field(default_factory=dict)
 
 
@@ -207,6 +208,7 @@ def valid_field_mask(
     radius_fraction: float = 0.47,
     softness_fraction: float = 0.045,
     outside_intensity: float = 0.0,
+    outside_level: float = 0.0,
 ) -> np.ndarray:
     height, width = int(shape[0]), int(shape[1])
     y, x = np.ogrid[:height, :width]
@@ -215,12 +217,14 @@ def valid_field_mask(
     radius_fraction = min(0.95, max(0.10, float(radius_fraction)))
     softness_fraction = min(0.50, max(0.001, float(softness_fraction)))
     outside_intensity = min(1.0, max(0.0, float(outside_intensity)))
+    outside_level = min(1.0, max(0.0, float(outside_level)))
     radius = min(height, width) * radius_fraction
     feather = max(1.0, min(height, width) * softness_fraction)
     distance = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
     mask = np.clip((radius + feather - distance) / feather, 0.0, 1.0)
     smooth_mask = mask * mask * (3.0 - 2.0 * mask)
-    return (1.0 - outside_intensity) + outside_intensity * smooth_mask
+    outside_mask = outside_level + (1.0 - outside_level) * smooth_mask
+    return (1.0 - outside_intensity) + outside_intensity * outside_mask
 
 
 def apply_valid_field_mask(
@@ -228,11 +232,12 @@ def apply_valid_field_mask(
     radius_fraction: float = 0.47,
     softness_fraction: float = 0.045,
     outside_intensity: float = 0.0,
+    outside_level: float = 0.0,
 ) -> dict[str, np.ndarray]:
     if not stacked:
         return stacked
     first_image = next(iter(stacked.values()))
-    mask = valid_field_mask(first_image.shape, radius_fraction, softness_fraction, outside_intensity)
+    mask = valid_field_mask(first_image.shape, radius_fraction, softness_fraction, outside_intensity, outside_level)
     return {band: np.asarray(image) * mask for band, image in stacked.items()}
 
 
@@ -242,13 +247,14 @@ def apply_background_correction(
     mask_radius: float = 0.47,
     mask_softness: float = 0.045,
     outside_intensity: float = 0.0,
+    outside_level: float = 0.0,
 ) -> dict[str, np.ndarray]:
     if background_correction == BACKGROUND_OFF:
         return stacked
     if background_correction == BACKGROUND_AUTOMATIC:
         return apply_automatic_background_correction(stacked)
     if background_correction == BACKGROUND_VALID_FIELD_MASK:
-        return apply_valid_field_mask(stacked, mask_radius, mask_softness, outside_intensity)
+        return apply_valid_field_mask(stacked, mask_radius, mask_softness, outside_intensity, outside_level)
     raise ValueError(f"Unsupported background correction mode: {background_correction}.")
 
 
@@ -286,6 +292,7 @@ def run_reduction(
     mask_radius: float = 0.47,
     mask_softness: float = 0.045,
     outside_intensity: float = 0.0,
+    outside_level: float = 0.0,
 ) -> ReductionResult:
     paths.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -362,7 +369,7 @@ def run_reduction(
 
     if background_correction != BACKGROUND_OFF:
         report(88, "Applying background correction")
-        stacked = apply_background_correction(stacked, background_correction, mask_radius, mask_softness, outside_intensity)
+        stacked = apply_background_correction(stacked, background_correction, mask_radius, mask_softness, outside_intensity, outside_level)
 
     report(90, "Composing RGB image")
     rgb = create_available_channel_rgb(stacked, stretch, q_value)
@@ -380,4 +387,5 @@ def run_reduction(
         background_mask_radius=mask_radius,
         background_mask_softness=mask_softness,
         background_outside_intensity=outside_intensity,
+        background_outside_level=outside_level,
     )
