@@ -22,6 +22,7 @@ from reduction_tool.processing import (
     BACKGROUND_AUTOMATIC,
     BACKGROUND_OFF,
     BACKGROUND_VALID_FIELD_MASK,
+    apply_background_correction,
     apply_channel_offsets,
     create_available_channel_rgb,
     run_reduction,
@@ -193,7 +194,7 @@ class ManualAlignmentWindow(tk.Toplevel):
         self.update_preview_button.pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Reset channel", command=self.reset_channel).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Reset all", command=self.reset_all).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Save image", command=self.save_image).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Confirm alignment", command=self.confirm_alignment).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Cancel", command=self.cancel).pack(side="left")
 
         ttk.Label(self, textvariable=self.status, style="Muted.TLabel", padding=(12, 0, 12, 12)).grid(
@@ -546,13 +547,12 @@ class ManualAlignmentWindow(tk.Toplevel):
         )
         self.draw_measurement_overlay()
 
-    def save_image(self) -> None:
+    def confirm_alignment(self) -> None:
         self.store_current_channel()
         shifted = apply_channel_offsets(self.result.stacked, self.current_offsets())
         self.result.stacked = shifted
         self.result.rgb = create_available_channel_rgb(shifted, stretch=5, q_value=8)
-        save_rgb_image(self.result.rgb, self.result.output_file)
-        self.parent.on_manual_alignment_saved(self.result, self.current_offsets())
+        self.parent.on_manual_alignment_confirmed(self.result, self.current_offsets())
         self.cleanup()
         self.destroy()
 
@@ -564,6 +564,213 @@ class ManualAlignmentWindow(tk.Toplevel):
     def cleanup(self) -> None:
         for sequence in ("<Left>", "<Right>", "<Up>", "<Down>", "<Shift-Left>", "<Shift-Right>", "<Shift-Up>", "<Shift-Down>", "<space>"):
             self.unbind_all(sequence)
+
+
+class BackgroundCorrectionWindow(tk.Toplevel):
+    def __init__(
+        self,
+        parent: "ReductionApp",
+        result: object,
+        manual_offsets: dict[str, tuple[float, float]] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.parent = parent
+        self.result = result
+        self.manual_offsets = manual_offsets
+        self.title("Background correction preview")
+        self.geometry("1180x820")
+        self.minsize(900, 640)
+        self.configure_app_icon()
+        self.configure(bg=DARK_BG)
+
+        self.mode_labels = {
+            "Off": BACKGROUND_OFF,
+            "Automatic background correction": BACKGROUND_AUTOMATIC,
+            "Valid field mask": BACKGROUND_VALID_FIELD_MASK,
+        }
+        initial_mode = getattr(result, "background_correction", None) or parent.background_correction.get()
+        initial_label = next((label for label, mode in self.mode_labels.items() if mode == initial_mode), "Off")
+        self.mode_label = tk.StringVar(value=initial_label)
+        self.radius = tk.DoubleVar(value=float(getattr(result, "background_mask_radius", 0.47)))
+        self.softness = tk.DoubleVar(value=float(getattr(result, "background_mask_softness", 0.045)))
+        self.status = tk.StringVar(value="Adjust background correction, update the preview, then save the image.")
+        self.preview_pil_image: Image.Image | None = None
+        self.preview_image: ImageTk.PhotoImage | None = None
+
+        self._build_layout()
+        self.protocol("WM_DELETE_WINDOW", self.cancel)
+        self.update_controls_state()
+        self.render_preview()
+        self.after(50, self.maximize_window)
+        self.after(100, self.update_button.focus_set)
+        self.grab_set()
+
+    def configure_app_icon(self) -> None:
+        try:
+            if hasattr(self.parent, "app_icon_image"):
+                self.iconphoto(True, self.parent.app_icon_image)
+        except tk.TclError:
+            pass
+
+    def maximize_window(self) -> None:
+        try:
+            self.state("zoomed")
+        except tk.TclError:
+            self.attributes("-zoomed", True)
+
+    def _build_layout(self) -> None:
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        preview_frame = ttk.Frame(self, padding=12, style="Panel.TFrame")
+        preview_frame.grid(row=0, column=0, sticky="nsew")
+        preview_frame.columnconfigure(0, weight=1)
+        preview_frame.rowconfigure(0, weight=1)
+
+        self.preview_canvas = tk.Canvas(preview_frame, bg=PANEL_BG, highlightthickness=0, bd=0)
+        self.preview_canvas.grid(row=0, column=0, sticky="nsew")
+        self.preview_canvas.bind("<Configure>", lambda _event: self.display_preview_image())
+
+        controls = ttk.Frame(self, padding=(12, 0, 12, 12))
+        controls.grid(row=1, column=0, sticky="ew")
+        controls.columnconfigure(8, weight=1)
+
+        ttk.Label(controls, text="Background correction").grid(row=0, column=0, sticky="w")
+        self.mode_picker = ttk.Combobox(
+            controls,
+            state="readonly",
+            values=tuple(self.mode_labels.keys()),
+            textvariable=self.mode_label,
+            width=32,
+        )
+        self.mode_picker.grid(row=0, column=1, sticky="w", padx=(8, 18))
+        self.mode_picker.bind("<<ComboboxSelected>>", self.on_mode_selected)
+
+        ttk.Label(controls, text="Radius").grid(row=0, column=2, sticky="w")
+        self.radius_spinbox = self.create_number_spinbox(controls, self.radius, 0.10, 0.95, 0.01, 7)
+        self.radius_spinbox.grid(row=0, column=3, sticky="w", padx=(8, 18))
+
+        ttk.Label(controls, text="Softness").grid(row=0, column=4, sticky="w")
+        self.softness_spinbox = self.create_number_spinbox(controls, self.softness, 0.001, 0.50, 0.005, 7)
+        self.softness_spinbox.grid(row=0, column=5, sticky="w", padx=(8, 18))
+
+        self.update_button = ttk.Button(controls, text="Update preview", command=self.render_preview)
+        self.update_button.grid(row=0, column=6, sticky="w", padx=(0, 8))
+        ttk.Button(controls, text="Save image", command=self.save_image).grid(row=0, column=7, sticky="w", padx=(0, 8))
+        ttk.Button(controls, text="Cancel", command=self.cancel).grid(row=0, column=8, sticky="e")
+
+        ttk.Label(self, textvariable=self.status, style="Muted.TLabel", padding=(12, 0, 12, 12)).grid(
+            row=2,
+            column=0,
+            sticky="ew",
+        )
+
+    def create_number_spinbox(
+        self,
+        parent: ttk.Frame,
+        variable: tk.DoubleVar,
+        from_value: float,
+        to_value: float,
+        increment: float,
+        width: int,
+    ) -> tk.Spinbox:
+        return tk.Spinbox(
+            parent,
+            from_=from_value,
+            to=to_value,
+            increment=increment,
+            width=width,
+            textvariable=variable,
+            bg=FIELD_BG,
+            fg=TEXT,
+            insertbackground=TEXT,
+            buttonbackground=FIELD_BG,
+            disabledbackground=FIELD_BG,
+            readonlybackground=FIELD_BG,
+            highlightbackground=BORDER,
+            highlightcolor=ACCENT,
+            highlightthickness=1,
+            relief="flat",
+            bd=0,
+        )
+
+    def current_mode(self) -> str:
+        return self.mode_labels.get(self.mode_label.get(), BACKGROUND_OFF)
+
+    def current_radius(self) -> float:
+        try:
+            value = float(self.radius.get())
+        except (tk.TclError, ValueError):
+            value = 0.47
+        value = min(0.95, max(0.10, value))
+        self.radius.set(value)
+        return value
+
+    def current_softness(self) -> float:
+        try:
+            value = float(self.softness.get())
+        except (tk.TclError, ValueError):
+            value = 0.045
+        value = min(0.50, max(0.001, value))
+        self.softness.set(value)
+        return value
+
+    def on_mode_selected(self, _event: object | None = None) -> None:
+        self.update_controls_state()
+        self.status.set("Background mode changed. Click Update preview to apply it.")
+
+    def update_controls_state(self) -> None:
+        state = "normal" if self.current_mode() == BACKGROUND_VALID_FIELD_MASK else "disabled"
+        self.radius_spinbox.configure(state=state)
+        self.softness_spinbox.configure(state=state)
+
+    def corrected_stacked(self) -> dict[str, np.ndarray]:
+        return apply_background_correction(
+            self.result.stacked,
+            self.current_mode(),
+            self.current_radius(),
+            self.current_softness(),
+        )
+
+    def render_preview(self) -> None:
+        corrected = self.corrected_stacked()
+        rgb = create_available_channel_rgb(corrected, stretch=5, q_value=8)
+        self.preview_pil_image = ImageOps.flip(Image.fromarray(rgb).convert("RGB"))
+        self.display_preview_image()
+        self.status.set(
+            f"Preview updated. Radius={self.current_radius():.3f}; softness={self.current_softness():.3f}."
+        )
+
+    def display_preview_image(self) -> None:
+        if self.preview_pil_image is None:
+            return
+        canvas_width = max(1, self.preview_canvas.winfo_width())
+        canvas_height = max(1, self.preview_canvas.winfo_height())
+        image_width, image_height = self.preview_pil_image.size
+        scale = min(canvas_width / image_width, canvas_height / image_height)
+        display_width = max(1, int(image_width * scale))
+        display_height = max(1, int(image_height * scale))
+        origin_x = (canvas_width - display_width) / 2
+        origin_y = (canvas_height - display_height) / 2
+        preview = self.preview_pil_image.resize((display_width, display_height), Image.Resampling.LANCZOS)
+        self.preview_image = ImageTk.PhotoImage(preview)
+        self.preview_canvas.delete("all")
+        self.preview_canvas.create_image(origin_x, origin_y, image=self.preview_image, anchor="nw")
+
+    def save_image(self) -> None:
+        corrected = self.corrected_stacked()
+        self.result.stacked = corrected
+        self.result.rgb = create_available_channel_rgb(corrected, stretch=5, q_value=8)
+        self.result.background_correction = self.current_mode()
+        self.result.background_mask_radius = self.current_radius()
+        self.result.background_mask_softness = self.current_softness()
+        save_rgb_image(self.result.rgb, self.result.output_file)
+        self.parent.on_background_correction_saved(self.result, self.manual_offsets)
+        self.destroy()
+
+    def cancel(self) -> None:
+        self.parent.on_background_correction_cancelled()
+        self.destroy()
 
 class ObjectFilterWindow(tk.Toplevel):
     def __init__(
@@ -976,7 +1183,7 @@ class ReductionApp(tk.Tk):
             ).place(x=0, y=72)
             author_link = tk.Label(
                 text_stack,
-                text="github.com/ericBK26 | ericbairroskrause@gmail.com",
+                text="github.com/ericBK26 | bairros.krause@ufrgs.br",
                 bg=PANEL_BG,
                 fg=MUTED_TEXT,
                 font=("Segoe UI", 9),
@@ -1287,6 +1494,10 @@ class ReductionApp(tk.Tk):
             BACKGROUND_AUTOMATIC: "automatic background correction",
             BACKGROUND_VALID_FIELD_MASK: "valid field mask",
         }
+        if mode == BACKGROUND_VALID_FIELD_MASK:
+            radius = float(getattr(result, "background_mask_radius", 0.47))
+            softness = float(getattr(result, "background_mask_softness", 0.045))
+            return f"Background correction: valid field mask (radius={radius:.3f}, softness={softness:.3f})."
         return f"Background correction: {labels.get(mode, mode)}."
 
     def format_manual_offsets(self, offsets: dict[str, tuple[float, float]]) -> str:
@@ -1298,18 +1509,39 @@ class ReductionApp(tk.Tk):
         return details or "no manual offsets"
 
     def open_manual_alignment(self, result: object) -> None:
-        self.status.set("Manual alignment ready. Adjust the preview, then save the image.")
+        self.status.set("Manual alignment ready. Adjust the preview, then confirm the alignment.")
         self.progress.set(96)
         ManualAlignmentWindow(self, result)
 
-    def on_manual_alignment_saved(self, result: object, offsets: dict[str, tuple[float, float]]) -> None:
+    def on_manual_alignment_confirmed(self, result: object, offsets: dict[str, tuple[float, float]]) -> None:
+        self.open_background_correction(result, offsets)
+
+    def open_background_correction(
+        self,
+        result: object,
+        manual_offsets: dict[str, tuple[float, float]] | None = None,
+    ) -> None:
+        self.status.set("Background correction preview ready. Adjust the preview, then save the image.")
+        self.progress.set(98)
+        BackgroundCorrectionWindow(self, result, manual_offsets)
+
+    def on_background_correction_saved(
+        self,
+        result: object,
+        manual_offsets: dict[str, tuple[float, float]] | None = None,
+    ) -> None:
         alignment_summary = self.format_alignment_summary(result)
-        manual_summary = self.format_manual_offsets(offsets)
         background_summary = self.format_background_summary(result)
-        message = f"Image saved to:\n{result.output_file}\n\n{alignment_summary}\n{background_summary}\nManual offsets: {manual_summary}."
+        manual_summary = self.format_manual_offsets(manual_offsets or {})
+        manual_line = f"\nManual offsets: {manual_summary}." if manual_offsets is not None else ""
+        message = f"Image saved to:\n{result.output_file}\n\n{alignment_summary}\n{background_summary}{manual_line}"
         self.progress.set(100)
-        self.status.set(f"Image saved to: {result.output_file}. Manual offsets: {manual_summary}.")
+        self.status.set(f"Image saved to: {result.output_file}. {background_summary}")
         messagebox.showinfo("Processing complete", message)
+
+    def on_background_correction_cancelled(self) -> None:
+        self.progress.set(0)
+        self.status.set("Background correction cancelled. No image was saved.")
 
     def on_manual_alignment_cancelled(self) -> None:
         self.progress.set(0)
@@ -1328,23 +1560,18 @@ class ReductionApp(tk.Tk):
                 paths=paths,
                 object_name=object_name,
                 alignment_mode=alignment_mode,
-                background_correction=background_correction,
+                background_correction=BACKGROUND_OFF,
                 progress_callback=self.update_progress,
                 object_file_selection=self.selected_object_file_lists(),
             )
+
+            result.background_correction = background_correction
 
             if alignment_mode == ALIGNMENT_MANUAL:
                 self.after(0, self.open_manual_alignment, result)
                 return
 
-            self.update_progress(98, "Saving output image")
-            save_rgb_image(result.rgb, result.output_file)
-            self.set_progress(100)
-
-            alignment_summary = self.format_alignment_summary(result)
-            background_summary = self.format_background_summary(result)
-            self.set_status(f"Image saved to: {result.output_file}. {alignment_summary} {background_summary}")
-            self.show_info("Processing complete", f"Image saved to:\n{result.output_file}\n\n{alignment_summary}\n{background_summary}")
+            self.after(0, self.open_background_correction, result)
         except Exception as exc:
             self.set_progress(0)
             self.set_status("Processing failed.")

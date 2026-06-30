@@ -3,7 +3,7 @@
 ## Primary Author
 
 - Name: Eric Bairros Krause
-- Email: ericbairroskrause@gmail.com
+- Email: bairros.krause@ufrgs.br
 - GitHub: https://github.com/ericBK26/
 
 ## Project
