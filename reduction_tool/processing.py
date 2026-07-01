@@ -19,10 +19,18 @@ ALIGNMENT_MODES = (ALIGNMENT_NONE, ALIGNMENT_AUTOMATIC, ALIGNMENT_MANUAL)
 BACKGROUND_OFF = "off"
 BACKGROUND_AUTOMATIC = "automatic"
 BACKGROUND_VALID_FIELD_MASK = "valid_field_mask"
+BACKGROUND_POLYNOMIAL = "polynomial"
+BACKGROUND_MEDIAN_GRID = "median_grid"
+BACKGROUND_PHOTUTILS = "photutils"
+BACKGROUND_HYBRID = "hybrid"
 BACKGROUND_CORRECTION_MODES = (
     BACKGROUND_OFF,
     BACKGROUND_AUTOMATIC,
     BACKGROUND_VALID_FIELD_MASK,
+    BACKGROUND_POLYNOMIAL,
+    BACKGROUND_MEDIAN_GRID,
+    BACKGROUND_PHOTUTILS,
+    BACKGROUND_HYBRID,
 )
 ProgressCallback = Callable[[float, str], None]
 
@@ -195,6 +203,425 @@ def estimate_smooth_background(image: np.ndarray) -> np.ndarray:
     return background[:height, :width]
 
 
+
+def _safe_float_image(image: np.ndarray) -> np.ndarray:
+    data = np.asarray(image, dtype=np.float32)
+    return np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _robust_sigma(data: np.ndarray) -> tuple[float, float]:
+    values = np.asarray(data, dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 0.0, 1.0
+    median = float(np.median(finite))
+    mad = float(np.median(np.abs(finite - median)))
+    sigma = 1.4826 * mad if mad > 0 else float(np.std(finite))
+    return median, max(sigma, 1e-6)
+
+
+def _normalise_preview(image: np.ndarray, low: float = 0.3, high: float = 99.7) -> np.ndarray:
+    data = _safe_float_image(image)
+    out = np.zeros_like(data, dtype=np.float32)
+    if data.ndim == 2:
+        lo, hi = np.percentile(data, [low, high])
+        if hi <= lo:
+            hi = lo + 1.0
+        return np.clip((data - lo) / (hi - lo), 0, 1)
+    for channel in range(data.shape[2]):
+        plane = data[..., channel]
+        lo, hi = np.percentile(plane, [low, high])
+        if hi <= lo:
+            hi = lo + 1.0
+        out[..., channel] = np.clip((plane - lo) / (hi - lo), 0, 1)
+    return out
+
+
+def _dilate_mask(mask: np.ndarray, pixels: int) -> np.ndarray:
+    if pixels <= 0:
+        return mask.astype(bool)
+    try:
+        from scipy.ndimage import binary_dilation
+
+        return binary_dilation(mask, iterations=int(pixels))
+    except Exception:
+        expanded = mask.astype(bool)
+        for _ in range(int(pixels)):
+            padded = np.pad(expanded, 1, mode="edge")
+            expanded = (
+                padded[1:-1, 1:-1]
+                | padded[:-2, 1:-1]
+                | padded[2:, 1:-1]
+                | padded[1:-1, :-2]
+                | padded[1:-1, 2:]
+                | padded[:-2, :-2]
+                | padded[:-2, 2:]
+                | padded[2:, :-2]
+                | padded[2:, 2:]
+            )
+        return expanded
+
+
+def _auto_galaxy_geometry(luminance: np.ndarray) -> tuple[tuple[float, float], tuple[float, float], float]:
+    height, width = luminance.shape
+    try:
+        from scipy.ndimage import gaussian_filter
+
+        smoothed = gaussian_filter(luminance, sigma=max(4.0, min(height, width) / 80.0))
+    except Exception:
+        smoothed = luminance
+    y, x = np.unravel_index(int(np.nanargmax(smoothed)), smoothed.shape)
+    return (float(x), float(y)), (width * 0.22, height * 0.16), 0.0
+
+
+def _ellipse_mask(
+    shape: tuple[int, int],
+    center: tuple[float, float],
+    axes: tuple[float, float],
+    angle_degrees: float,
+) -> np.ndarray:
+    height, width = shape
+    center_x, center_y = center
+    axis_a = max(1.0, float(axes[0]))
+    axis_b = max(1.0, float(axes[1]))
+    angle = np.deg2rad(float(angle_degrees))
+    y, x = np.ogrid[:height, :width]
+    dx = x - center_x
+    dy = y - center_y
+    rotated_x = dx * np.cos(angle) + dy * np.sin(angle)
+    rotated_y = -dx * np.sin(angle) + dy * np.cos(angle)
+    return (rotated_x / axis_a) ** 2 + (rotated_y / axis_b) ** 2 <= 1.0
+
+
+def _build_background_mask(
+    image_rgb: np.ndarray,
+    star_sigma_threshold: float,
+    star_mask_dilation_px: int,
+    protect_galaxy: bool,
+    galaxy_center: tuple[float, float] | None,
+    galaxy_axes: tuple[float, float] | None,
+    galaxy_angle: float,
+) -> tuple[np.ndarray, dict[str, object], dict[str, np.ndarray]]:
+    luminance = np.median(image_rgb, axis=2)
+    median, sigma = _robust_sigma(luminance)
+    star_mask = luminance > median + max(0.5, float(star_sigma_threshold)) * sigma
+    star_mask = _dilate_mask(star_mask, int(star_mask_dilation_px))
+
+    auto_center, auto_axes, auto_angle = _auto_galaxy_geometry(luminance)
+    center = galaxy_center if galaxy_center is not None else auto_center
+    axes = galaxy_axes if galaxy_axes is not None else auto_axes
+    angle = galaxy_angle if galaxy_angle is not None else auto_angle
+    galaxy_mask = _ellipse_mask(luminance.shape, center, axes, angle) if protect_galaxy else np.zeros_like(star_mask, dtype=bool)
+    protected = star_mask | galaxy_mask
+
+    used = ~protected
+    if np.count_nonzero(used) < image_rgb.shape[0] * image_rgb.shape[1] * 0.05:
+        protected = star_mask
+        used = ~protected
+    geometry = {
+        "galaxy_center": center,
+        "galaxy_axes": axes,
+        "galaxy_angle": float(angle),
+        "star_pixels": int(np.count_nonzero(star_mask)),
+        "galaxy_pixels": int(np.count_nonzero(galaxy_mask)),
+    }
+    layers = {
+        "stars": star_mask.astype(bool),
+        "galaxy": galaxy_mask.astype(bool),
+        "sky": used.astype(bool),
+    }
+    return protected, geometry, layers
+
+
+def _sigma_clip_values(values: np.ndarray, sigma: float) -> np.ndarray:
+    data = values[np.isfinite(values)]
+    if data.size == 0:
+        return data
+    center, spread = _robust_sigma(data)
+    return data[np.abs(data - center) <= max(0.5, float(sigma)) * spread]
+
+
+def _median_grid_background(
+    channel: np.ndarray,
+    sky_mask: np.ndarray,
+    grid_size: int,
+    smoothing_sigma: float,
+    sigma_clip: bool,
+    sigma_clip_sigma: float,
+) -> np.ndarray:
+    from scipy.ndimage import gaussian_filter, zoom
+
+    height, width = channel.shape
+    grid = max(16, int(grid_size))
+    samples_y = max(4, int(np.ceil(height / grid)))
+    samples_x = max(4, int(np.ceil(width / grid)))
+    low = np.empty((samples_y, samples_x), dtype=np.float32)
+    global_values = channel[sky_mask]
+    if sigma_clip:
+        global_values = _sigma_clip_values(global_values, sigma_clip_sigma)
+    global_median = float(np.median(global_values)) if global_values.size else float(np.median(channel))
+
+    for row in range(samples_y):
+        y0 = int(row * height / samples_y)
+        y1 = int((row + 1) * height / samples_y)
+        for col in range(samples_x):
+            x0 = int(col * width / samples_x)
+            x1 = int((col + 1) * width / samples_x)
+            block = channel[y0:y1, x0:x1]
+            block_mask = sky_mask[y0:y1, x0:x1]
+            values = block[block_mask]
+            if sigma_clip:
+                values = _sigma_clip_values(values, sigma_clip_sigma)
+            low[row, col] = float(np.median(values)) if values.size else global_median
+
+    sigma = max(0.0, float(smoothing_sigma))
+    if sigma > 0:
+        low = gaussian_filter(low, sigma=sigma, mode="nearest")
+    background = zoom(low, (height / low.shape[0], width / low.shape[1]), order=3)
+    return background[:height, :width].astype(np.float32)
+
+
+def _polynomial_background(
+    channel: np.ndarray,
+    sky_mask: np.ndarray,
+    order: int,
+    sigma_clip: bool,
+    sigma_clip_sigma: float,
+) -> np.ndarray:
+    height, width = channel.shape
+    y, x = np.indices(channel.shape, dtype=np.float32)
+    xn = (x / max(1, width - 1)) * 2.0 - 1.0
+    yn = (y / max(1, height - 1)) * 2.0 - 1.0
+    values = channel[sky_mask]
+    sample_x = xn[sky_mask]
+    sample_y = yn[sky_mask]
+    if sigma_clip and values.size:
+        center, spread = _robust_sigma(values)
+        keep = np.abs(values - center) <= max(0.5, float(sigma_clip_sigma)) * spread
+        values = values[keep]
+        sample_x = sample_x[keep]
+        sample_y = sample_y[keep]
+    if values.size < 16:
+        return np.full_like(channel, float(np.median(channel)), dtype=np.float32)
+    terms = []
+    full_terms = []
+    max_order = max(0, min(4, int(order)))
+    for i in range(max_order + 1):
+        for j in range(max_order + 1 - i):
+            terms.append((sample_x ** i) * (sample_y ** j))
+            full_terms.append((xn ** i) * (yn ** j))
+    design = np.vstack(terms).T
+    coeffs, *_ = np.linalg.lstsq(design, values, rcond=None)
+    background = np.zeros_like(channel, dtype=np.float32)
+    for coeff, term in zip(coeffs, full_terms):
+        background += float(coeff) * term.astype(np.float32)
+    return background
+
+
+def _photutils_background(
+    channel: np.ndarray,
+    protected_mask: np.ndarray,
+    grid_size: int,
+    sigma_clip_sigma: float,
+) -> np.ndarray:
+    from astropy.stats import SigmaClip
+    from photutils.background import Background2D, MedianBackground
+
+    box = max(16, int(grid_size))
+    sigma_clipper = SigmaClip(sigma=max(0.5, float(sigma_clip_sigma)))
+    bkg = Background2D(
+        channel,
+        box_size=(box, box),
+        filter_size=(3, 3),
+        mask=protected_mask,
+        sigma_clip=sigma_clipper,
+        bkg_estimator=MedianBackground(),
+    )
+    return np.asarray(bkg.background, dtype=np.float32)
+
+
+def _estimate_background_model(
+    image_rgb: np.ndarray,
+    protected_mask: np.ndarray,
+    method: str,
+    grid_size: int,
+    smoothing_sigma: float,
+    polynomial_order: int,
+    sigma_clip: bool,
+    sigma_clip_sigma: float,
+) -> tuple[np.ndarray, str]:
+    sky_mask = ~protected_mask
+    background = np.zeros_like(image_rgb, dtype=np.float32)
+    used_method = method
+    for channel_index in range(3):
+        channel = image_rgb[..., channel_index]
+        if method == BACKGROUND_PHOTUTILS:
+            try:
+                background[..., channel_index] = _photutils_background(channel, protected_mask, grid_size, sigma_clip_sigma)
+            except Exception:
+                used_method = BACKGROUND_MEDIAN_GRID
+                background[..., channel_index] = _median_grid_background(
+                    channel, sky_mask, grid_size, smoothing_sigma, sigma_clip, sigma_clip_sigma
+                )
+        elif method == BACKGROUND_POLYNOMIAL:
+            background[..., channel_index] = _polynomial_background(
+                channel, sky_mask, polynomial_order, sigma_clip, sigma_clip_sigma
+            )
+        elif method in (BACKGROUND_MEDIAN_GRID, BACKGROUND_HYBRID, BACKGROUND_AUTOMATIC, BACKGROUND_VALID_FIELD_MASK):
+            grid_model = _median_grid_background(channel, sky_mask, grid_size, smoothing_sigma, sigma_clip, sigma_clip_sigma)
+            if method == BACKGROUND_HYBRID:
+                poly_model = _polynomial_background(channel, sky_mask, polynomial_order, sigma_clip, sigma_clip_sigma)
+                background[..., channel_index] = 0.75 * grid_model + 0.25 * poly_model
+            else:
+                background[..., channel_index] = grid_model
+        else:
+            background[..., channel_index] = np.median(channel[sky_mask]) if np.any(sky_mask) else np.median(channel)
+    return background, used_method
+
+
+def remove_background_gradient(
+    image_rgb,
+    method="hybrid",
+    star_sigma_threshold=3.0,
+    star_mask_dilation_px=3,
+    protect_galaxy=True,
+    galaxy_center=None,
+    galaxy_axes=None,
+    galaxy_angle=0.0,
+    grid_size=128,
+    smoothing_sigma=3.0,
+    polynomial_order=2,
+    sigma_clip=True,
+    sigma_clip_sigma=3.0,
+    correction_strength=0.8,
+    neutralize_background=True,
+    black_point_percentile=0.3,
+    avoid_clipping=True,
+    output_floor_mode="percentile_shift",
+    debug=False,
+):
+    image = _safe_float_image(image_rgb)
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError("image_rgb must be an RGB array with shape (height, width, 3).")
+    method = BACKGROUND_HYBRID if method == "hybrid" else str(method)
+    if method == BACKGROUND_OFF:
+        background = np.zeros_like(image, dtype=np.float32)
+        corrected = image.copy()
+        mask = np.zeros(image.shape[:2], dtype=bool)
+        residual = corrected.copy()
+        stats = {"method": BACKGROUND_OFF, "sky_pixels_used_percent": 100.0}
+        return {"corrected": corrected, "background_model": background, "mask": mask, "residual": residual, "stats": stats, "debug_images": {}}
+
+    protected_mask, geometry, mask_layers = _build_background_mask(
+        image,
+        star_sigma_threshold,
+        star_mask_dilation_px,
+        bool(protect_galaxy),
+        galaxy_center,
+        galaxy_axes,
+        galaxy_angle,
+    )
+    sky_mask = ~protected_mask
+    background_before = np.array([
+        float(np.median(image[..., channel][sky_mask])) if np.any(sky_mask) else float(np.median(image[..., channel]))
+        for channel in range(3)
+    ])
+    background_model, used_method = _estimate_background_model(
+        image,
+        protected_mask,
+        method,
+        grid_size,
+        smoothing_sigma,
+        polynomial_order,
+        bool(sigma_clip),
+        sigma_clip_sigma,
+    )
+    reference = np.array([
+        float(np.median(background_model[..., channel][sky_mask])) if np.any(sky_mask) else float(np.median(background_model[..., channel]))
+        for channel in range(3)
+    ], dtype=np.float32)
+    strength = min(1.0, max(0.0, float(correction_strength)))
+    corrected = image - strength * (background_model - reference.reshape(1, 1, 3))
+
+    if neutralize_background and np.any(sky_mask):
+        sky_medians = np.array([float(np.median(corrected[..., channel][sky_mask])) for channel in range(3)], dtype=np.float32)
+        neutral = float(np.median(sky_medians))
+        corrected = corrected - (sky_medians - neutral).reshape(1, 1, 3)
+
+    output_floor_mode = str(output_floor_mode)
+
+    if black_point_percentile is not None and output_floor_mode == "percentile_shift":
+        percentile = min(10.0, max(0.0, float(black_point_percentile)))
+        if percentile > 0:
+            black_points = np.array([
+                float(np.percentile(corrected[..., channel][sky_mask], percentile)) if np.any(sky_mask) else float(np.percentile(corrected[..., channel], percentile))
+                for channel in range(3)
+            ], dtype=np.float32)
+            corrected = corrected - black_points.reshape(1, 1, 3)
+
+    clipped_low = int(np.count_nonzero(corrected < 0))
+    if avoid_clipping:
+        floor = 0.0
+        corrected = np.where(corrected < floor, floor + np.log1p(np.maximum(-corrected, 0)) * 0.0, corrected)
+    else:
+        corrected = np.clip(corrected, 0, None)
+    residual = corrected - np.array([
+        float(np.median(corrected[..., channel][sky_mask])) if np.any(sky_mask) else float(np.median(corrected[..., channel]))
+        for channel in range(3)
+    ], dtype=np.float32).reshape(1, 1, 3)
+    background_after = np.array([
+        float(np.median(corrected[..., channel][sky_mask])) if np.any(sky_mask) else float(np.median(corrected[..., channel]))
+        for channel in range(3)
+    ])
+    clipped_total = clipped_low + int(np.count_nonzero(~np.isfinite(corrected)))
+    total_values = int(np.prod(corrected.shape))
+    stats = {
+        "method": used_method,
+        "parameters": {
+            "star_sigma_threshold": float(star_sigma_threshold),
+            "star_mask_dilation_px": int(star_mask_dilation_px),
+            "protect_galaxy": bool(protect_galaxy),
+            "grid_size": int(grid_size),
+            "smoothing_sigma": float(smoothing_sigma),
+            "polynomial_order": int(polynomial_order),
+            "sigma_clip": bool(sigma_clip),
+            "sigma_clip_sigma": float(sigma_clip_sigma),
+            "correction_strength": strength,
+            "neutralize_background": bool(neutralize_background),
+            "black_point_percentile": float(black_point_percentile),
+            "avoid_clipping": bool(avoid_clipping),
+            "output_floor_mode": output_floor_mode,
+        },
+        "sky_pixels_used_percent": float(np.count_nonzero(sky_mask) * 100.0 / sky_mask.size),
+        "background_median_before": background_before.tolist(),
+        "background_median_after": background_after.tolist(),
+        "clipped_pixels_percent": float(clipped_total * 100.0 / max(1, total_values)),
+        **geometry,
+    }
+    debug_images = {}
+    if debug:
+        mask_rgb = np.zeros((*protected_mask.shape, 3), dtype=np.float32)
+        mask_rgb[..., 1] = mask_layers["sky"].astype(np.float32) * 0.55
+        mask_rgb[..., 0] = mask_layers["stars"].astype(np.float32)
+        mask_rgb[..., 2] = mask_layers["galaxy"].astype(np.float32)
+        mask_rgb[..., 0] = np.maximum(mask_rgb[..., 0], mask_layers["galaxy"].astype(np.float32) * 0.85)
+        debug_images = {
+            "original_preview": _normalise_preview(image),
+            "mask": mask_rgb,
+            "background_model": _normalise_preview(background_model),
+            "corrected_linear": _normalise_preview(corrected),
+            "corrected_stretched": _normalise_preview(corrected, 1.0, 99.5),
+            "residual_background": _normalise_preview(residual, 1.0, 99.0),
+        }
+    return {
+        "corrected": corrected.astype(np.float32),
+        "background_model": background_model.astype(np.float32),
+        "mask": protected_mask,
+        "residual": residual.astype(np.float32),
+        "stats": stats,
+        "debug_images": debug_images,
+        "mask_layers": mask_layers,
+    }
 def apply_automatic_background_correction(stacked: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     corrected: dict[str, np.ndarray] = {}
     for band, image in stacked.items():

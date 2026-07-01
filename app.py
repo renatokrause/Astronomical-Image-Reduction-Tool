@@ -20,11 +20,16 @@ from reduction_tool.processing import (
     ALIGNMENT_MANUAL,
     ALIGNMENT_NONE,
     BACKGROUND_AUTOMATIC,
+    BACKGROUND_HYBRID,
+    BACKGROUND_MEDIAN_GRID,
     BACKGROUND_OFF,
+    BACKGROUND_PHOTUTILS,
+    BACKGROUND_POLYNOMIAL,
     BACKGROUND_VALID_FIELD_MASK,
     apply_background_correction,
     apply_channel_offsets,
     create_available_channel_rgb,
+    remove_background_gradient,
     run_reduction,
 )
 
@@ -577,64 +582,76 @@ class BackgroundCorrectionWindow(tk.Toplevel):
         self.parent = parent
         self.result = result
         self.manual_offsets = manual_offsets
-        self.title("Background correction preview")
-        self.geometry("1180x820")
-        self.minsize(900, 640)
+        self.title("Background extraction preview")
+        self.geometry("1280x900")
+        self.minsize(980, 720)
         self.configure_app_icon()
         self.configure(bg=DARK_BG)
 
-        self.source_stacked = {
-            band: np.array(image, copy=True)
-            for band, image in result.stacked.items()
-        }
-        self.available_bands = [band for band in FILTERS if band in self.source_stacked]
-        self.available_bands.extend(band for band in self.source_stacked if band not in self.available_bands)
-        if not self.available_bands:
-            self.available_bands = list(self.source_stacked)
-
-        self.mode_labels = {
-            "Off": BACKGROUND_OFF,
-            "Automatic background correction": BACKGROUND_AUTOMATIC,
-            "Valid field mask": BACKGROUND_VALID_FIELD_MASK,
-        }
-        self.band_settings = self.initial_band_settings(result)
-        self.selected_band = tk.StringVar(value=self.available_bands[0] if self.available_bands else "")
-        self.current_background_band = self.selected_band.get()
-        self.mode_label = tk.StringVar()
-        self.radius = tk.DoubleVar()
-        self.softness = tk.DoubleVar()
-        self.outside_intensity = tk.DoubleVar()
-        self.outside_level = tk.DoubleVar()
-        self.status = tk.StringVar(value="Select a band, choose a background correction, update the preview, then save the image.")
-        self.preview_pil_image: Image.Image | None = None
+        self.source_stacked = {band: np.array(image, copy=True) for band, image in result.stacked.items()}
+        self.source_rgb = self.stacked_to_rgb(self.source_stacked)
         self.preview_image: ImageTk.PhotoImage | None = None
+        self.preview_pil_image: Image.Image | None = None
+        self.preview_geometry: tuple[float, float, float, int, int] | None = None
+        self.drag_start: tuple[float, float] | None = None
+        self.last_result: dict[str, object] | None = None
+
+        self.preview_mode = tk.StringVar(value="Corrected stretched")
+        self.method_label = tk.StringVar(value="Hybrid mask + background model + background neutralization")
+        self.overlay_mask = tk.BooleanVar(value=True)
+
+        self.star_sigma_threshold = tk.DoubleVar(value=3.0)
+        self.star_mask_dilation_px = tk.IntVar(value=3)
+        self.protect_galaxy = tk.BooleanVar(value=True)
+        self.auto_center = tk.BooleanVar(value=True)
+        center_x, center_y, axis_a, axis_b, angle = self.default_galaxy_geometry()
+        self.galaxy_center_x = tk.DoubleVar(value=center_x)
+        self.galaxy_center_y = tk.DoubleVar(value=center_y)
+        self.galaxy_axis_a = tk.DoubleVar(value=axis_a)
+        self.galaxy_axis_b = tk.DoubleVar(value=axis_b)
+        self.galaxy_angle = tk.DoubleVar(value=angle)
+        self.mask_galaxy_core = tk.BooleanVar(value=True)
+        self.mask_galaxy_halo_strength = tk.DoubleVar(value=1.0)
+
+        self.grid_size = tk.IntVar(value=128)
+        self.smoothing_sigma = tk.DoubleVar(value=3.0)
+        self.polynomial_order = tk.IntVar(value=2)
+        self.sigma_clip_enabled = tk.BooleanVar(value=True)
+        self.sigma_clip_sigma = tk.DoubleVar(value=3.0)
+        self.correction_strength = tk.DoubleVar(value=0.8)
+
+        self.neutralize_background = tk.BooleanVar(value=True)
+        self.preserve_galaxy_color = tk.BooleanVar(value=True)
+        self.black_point_percentile = tk.DoubleVar(value=0.3)
+        self.avoid_clipping = tk.BooleanVar(value=True)
+        self.output_floor_mode = tk.StringVar(value="percentile_shift")
+        self.status = tk.StringVar(value="Update the preview to estimate and remove the background gradient.")
+        self.stats_text = tk.StringVar(value="No preview calculated yet.")
+
+        self.method_values = {
+            "None": BACKGROUND_OFF,
+            "Polynomial gradient removal": BACKGROUND_POLYNOMIAL,
+            "Median grid background extraction": BACKGROUND_MEDIAN_GRID,
+            "Photutils Background2D": BACKGROUND_PHOTUTILS,
+            "Hybrid mask + background model + background neutralization": BACKGROUND_HYBRID,
+        }
+        self.preview_modes = (
+            "Original",
+            "Mask",
+            "Background model",
+            "Corrected linear",
+            "Corrected stretched",
+            "Before / After",
+            "Residual background",
+        )
 
         self._build_layout()
         self.protocol("WM_DELETE_WINDOW", self.cancel)
-        self.load_selected_band_settings()
-        self.render_preview()
         self.after(50, self.maximize_window)
         self.after(100, self.update_button.focus_set)
         self.bind_all("<space>", lambda _event: self.handle_update_preview())
+        self.render_preview()
         self.grab_set()
-
-    def initial_band_settings(self, result: object) -> dict[str, dict[str, float | str]]:
-        existing = getattr(result, "background_band_corrections", None) or {}
-        settings: dict[str, dict[str, float | str]] = {}
-        for band in self.available_bands:
-            band_existing = existing.get(band, {}) if isinstance(existing, dict) else {}
-            settings[band] = {
-                "mode": str(band_existing.get("mode", BACKGROUND_OFF)),
-                "radius": float(band_existing.get("radius", getattr(result, "background_mask_radius", 0.47))),
-                "softness": float(band_existing.get("softness", getattr(result, "background_mask_softness", 0.045))),
-                "outside_correction": float(
-                    band_existing.get("outside_correction", getattr(result, "background_outside_intensity", 0.0))
-                ),
-                "outside_level": float(
-                    band_existing.get("outside_level", getattr(result, "background_outside_level", 0.0))
-                ),
-            }
-        return settings
 
     def configure_app_icon(self) -> None:
         try:
@@ -649,81 +666,76 @@ class BackgroundCorrectionWindow(tk.Toplevel):
         except tk.TclError:
             self.attributes("-zoomed", True)
 
+    def stacked_to_rgb(self, stacked: dict[str, np.ndarray]) -> np.ndarray:
+        fallback = next(iter(stacked.values()))
+        return np.dstack((
+            stacked.get("R", np.zeros_like(fallback)),
+            stacked.get("V", np.zeros_like(fallback)),
+            stacked.get("B", np.zeros_like(fallback)),
+        )).astype(np.float32)
+
+    def default_galaxy_geometry(self) -> tuple[float, float, float, float, float]:
+        rgb = self.stacked_to_rgb(self.source_stacked)
+        luminance = np.median(rgb, axis=2)
+        height, width = luminance.shape
+        try:
+            y, x = np.unravel_index(int(np.nanargmax(luminance)), luminance.shape)
+        except ValueError:
+            x, y = width / 2, height / 2
+        return float(x), float(y), width * 0.22, height * 0.16, 0.0
+
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+
+        mode_bar = ttk.Frame(self, padding=(12, 12, 12, 6), style="Panel.TFrame")
+        mode_bar.grid(row=0, column=0, sticky="ew")
+        ttk.Label(mode_bar, text="Preview mode").pack(side="left", padx=(0, 8))
+        for mode in self.preview_modes:
+            ttk.Radiobutton(
+                mode_bar,
+                text=mode,
+                value=mode,
+                variable=self.preview_mode,
+                command=self.display_preview_image,
+            ).pack(side="left", padx=(0, 8))
+        ttk.Checkbutton(mode_bar, text="Mask overlay", variable=self.overlay_mask, command=self.display_preview_image).pack(side="right")
 
         preview_frame = ttk.Frame(self, padding=12, style="Panel.TFrame")
-        preview_frame.grid(row=0, column=0, sticky="nsew")
+        preview_frame.grid(row=1, column=0, sticky="nsew")
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
-
         self.preview_canvas = tk.Canvas(preview_frame, bg=PANEL_BG, highlightthickness=0, bd=0)
         self.preview_canvas.grid(row=0, column=0, sticky="nsew")
         self.preview_canvas.bind("<Configure>", lambda _event: self.display_preview_image())
+        self.preview_canvas.bind("<ButtonPress-1>", self.start_galaxy_drag)
+        self.preview_canvas.bind("<ButtonRelease-1>", self.finish_galaxy_drag)
 
-        controls = ttk.Frame(self, padding=(12, 0, 12, 12))
-        controls.grid(row=1, column=0, sticky="ew")
-        controls.columnconfigure(11, weight=1)
+        controls = ttk.Frame(self, padding=(12, 6, 12, 8))
+        controls.grid(row=2, column=0, sticky="ew")
+        for column in range(12):
+            controls.columnconfigure(column, weight=1)
 
-        ttk.Label(controls, text="Band").grid(row=0, column=0, sticky="w")
-        self.band_picker = ttk.Combobox(
-            controls,
-            state="readonly",
-            values=tuple(self.available_bands),
-            textvariable=self.selected_band,
-            width=8,
-        )
-        self.band_picker.grid(row=0, column=1, sticky="w", padx=(8, 18))
-        self.band_picker.bind("<<ComboboxSelected>>", self.on_band_selected)
+        self._build_masking_controls(controls, 0)
+        self._build_model_controls(controls, 3)
+        self._build_color_controls(controls, 6)
+        self._build_stats_controls(controls, 8)
 
-        ttk.Label(controls, text="Background correction").grid(row=0, column=2, sticky="w")
-        self.mode_picker = ttk.Combobox(
-            controls,
-            state="readonly",
-            values=tuple(self.mode_labels.keys()),
-            textvariable=self.mode_label,
-            width=32,
-        )
-        self.mode_picker.grid(row=0, column=3, sticky="w", padx=(8, 18))
-        self.mode_picker.bind("<<ComboboxSelected>>", self.on_mode_selected)
+        actions = ttk.Frame(self, padding=(12, 0, 12, 12))
+        actions.grid(row=3, column=0, sticky="ew")
+        self.update_button = ttk.Button(actions, text="Update preview", command=self.render_preview)
+        self.update_button.pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Apply", command=self.apply).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Save debug", command=self.save_debug_images).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Cancel", command=self.cancel).pack(side="right")
+        ttk.Label(actions, textvariable=self.status, style="Muted.TLabel").pack(side="left", padx=(12, 0), fill="x", expand=True)
 
-        ttk.Label(controls, text="Radius").grid(row=0, column=4, sticky="w")
-        self.radius_spinbox = self.create_number_spinbox(controls, self.radius, 0.10, 0.95, 0.01, 7)
-        self.radius_spinbox.grid(row=0, column=5, sticky="w", padx=(8, 18))
+    def _section(self, parent: ttk.Frame, title: str, row: int, column: int, colspan: int = 3) -> ttk.LabelFrame:
+        frame = ttk.LabelFrame(parent, text=title, padding=8)
+        frame.grid(row=row, column=column, columnspan=colspan, sticky="nsew", padx=(0, 8), pady=(0, 8))
+        return frame
 
-        ttk.Label(controls, text="Softness").grid(row=0, column=6, sticky="w")
-        self.softness_spinbox = self.create_number_spinbox(controls, self.softness, 0.001, 0.50, 0.005, 7)
-        self.softness_spinbox.grid(row=0, column=7, sticky="w", padx=(8, 18))
-
-        ttk.Label(controls, text="Outside correction").grid(row=0, column=8, sticky="w")
-        self.outside_intensity_spinbox = self.create_number_spinbox(controls, self.outside_intensity, 0.0, 1.0, 0.05, 7)
-        self.outside_intensity_spinbox.grid(row=0, column=9, sticky="w", padx=(8, 18))
-
-        ttk.Label(controls, text="Outside level").grid(row=0, column=10, sticky="w")
-        self.outside_level_spinbox = self.create_number_spinbox(controls, self.outside_level, 0.0, 1.0, 0.05, 7)
-        self.outside_level_spinbox.grid(row=0, column=11, sticky="w", padx=(8, 0))
-
-        self.update_button = ttk.Button(controls, text="Update preview", command=self.render_preview)
-        self.update_button.grid(row=1, column=0, sticky="w", pady=(10, 0))
-        ttk.Button(controls, text="Save image", command=self.save_image).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(10, 0))
-        ttk.Button(controls, text="Cancel", command=self.cancel).grid(row=1, column=11, sticky="e", pady=(10, 0))
-
-        ttk.Label(self, textvariable=self.status, style="Muted.TLabel", padding=(12, 0, 12, 12)).grid(
-            row=2,
-            column=0,
-            sticky="ew",
-        )
-
-    def create_number_spinbox(
-        self,
-        parent: ttk.Frame,
-        variable: tk.DoubleVar,
-        from_value: float,
-        to_value: float,
-        increment: float,
-        width: int,
-    ) -> tk.Spinbox:
+    def _spin(self, parent: ttk.Frame, variable: tk.Variable, from_value: float, to_value: float, increment: float, width: int = 7) -> tk.Spinbox:
         return tk.Spinbox(
             parent,
             from_=from_value,
@@ -735,8 +747,6 @@ class BackgroundCorrectionWindow(tk.Toplevel):
             fg=TEXT,
             insertbackground=TEXT,
             buttonbackground=FIELD_BG,
-            disabledbackground=FIELD_BG,
-            readonlybackground=FIELD_BG,
             highlightbackground=BORDER,
             highlightcolor=ACCENT,
             highlightthickness=1,
@@ -744,135 +754,165 @@ class BackgroundCorrectionWindow(tk.Toplevel):
             bd=0,
         )
 
-    def current_mode(self) -> str:
-        return self.mode_labels.get(self.mode_label.get(), BACKGROUND_OFF)
+    def _build_masking_controls(self, parent: ttk.Frame, row: int) -> None:
+        frame = self._section(parent, "Masking", row, 0, 4)
+        ttk.Label(frame, text="Star sigma").grid(row=0, column=0, sticky="w")
+        self._spin(frame, self.star_sigma_threshold, 0.5, 20.0, 0.1).grid(row=0, column=1, sticky="w", padx=(6, 12))
+        ttk.Label(frame, text="Dilation px").grid(row=0, column=2, sticky="w")
+        self._spin(frame, self.star_mask_dilation_px, 0, 20, 1).grid(row=0, column=3, sticky="w", padx=(6, 0))
+        ttk.Checkbutton(frame, text="Protect galaxy", variable=self.protect_galaxy).grid(row=1, column=0, sticky="w")
+        ttk.Checkbutton(frame, text="Auto center", variable=self.auto_center).grid(row=1, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Mask core", variable=self.mask_galaxy_core).grid(row=1, column=2, sticky="w")
+        ttk.Label(frame, text="Halo strength").grid(row=1, column=3, sticky="w")
+        self._spin(frame, self.mask_galaxy_halo_strength, 0.0, 3.0, 0.1).grid(row=1, column=4, sticky="w", padx=(6, 0))
+        labels = (("X", self.galaxy_center_x), ("Y", self.galaxy_center_y), ("A", self.galaxy_axis_a), ("B", self.galaxy_axis_b), ("Angle", self.galaxy_angle))
+        for index, (label, var) in enumerate(labels):
+            ttk.Label(frame, text=label).grid(row=2, column=index * 2, sticky="w", pady=(6, 0))
+            self._spin(frame, var, -10000, 10000, 1, 8).grid(row=2, column=index * 2 + 1, sticky="w", padx=(4, 10), pady=(6, 0))
 
-    def current_radius(self) -> float:
+    def _build_model_controls(self, parent: ttk.Frame, row: int) -> None:
+        frame = self._section(parent, "Background model", row, 0, 4)
+        ttk.Label(frame, text="Method").grid(row=0, column=0, sticky="w")
+        picker = ttk.Combobox(frame, state="readonly", values=tuple(self.method_values.keys()), textvariable=self.method_label, width=42)
+        picker.grid(row=0, column=1, columnspan=5, sticky="ew", padx=(6, 0))
+        ttk.Label(frame, text="Grid").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self._spin(frame, self.grid_size, 32, 512, 16).grid(row=1, column=1, sticky="w", padx=(6, 12), pady=(6, 0))
+        ttk.Label(frame, text="Smooth").grid(row=1, column=2, sticky="w", pady=(6, 0))
+        self._spin(frame, self.smoothing_sigma, 0, 20, 0.5).grid(row=1, column=3, sticky="w", padx=(6, 12), pady=(6, 0))
+        ttk.Label(frame, text="Order").grid(row=1, column=4, sticky="w", pady=(6, 0))
+        self._spin(frame, self.polynomial_order, 0, 4, 1).grid(row=1, column=5, sticky="w", padx=(6, 0), pady=(6, 0))
+        ttk.Checkbutton(frame, text="Sigma clip", variable=self.sigma_clip_enabled).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(frame, text="Clip sigma").grid(row=2, column=1, sticky="w", pady=(6, 0))
+        self._spin(frame, self.sigma_clip_sigma, 0.5, 10, 0.1).grid(row=2, column=2, sticky="w", padx=(6, 12), pady=(6, 0))
+        ttk.Label(frame, text="Strength").grid(row=2, column=3, sticky="w", pady=(6, 0))
+        self._spin(frame, self.correction_strength, 0, 1, 0.05).grid(row=2, column=4, sticky="w", padx=(6, 0), pady=(6, 0))
+
+    def _build_color_controls(self, parent: ttk.Frame, row: int) -> None:
+        frame = self._section(parent, "Color / Neutralization", row, 0, 4)
+        ttk.Checkbutton(frame, text="Neutralize background", variable=self.neutralize_background).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(frame, text="Preserve galaxy color", variable=self.preserve_galaxy_color).grid(row=0, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Avoid clipping", variable=self.avoid_clipping).grid(row=0, column=2, sticky="w")
+        ttk.Label(frame, text="Reference").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(frame, text="unmasked sky", style="Muted.TLabel").grid(row=1, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(frame, text="Black point %").grid(row=1, column=2, sticky="w", pady=(6, 0))
+        self._spin(frame, self.black_point_percentile, 0, 10, 0.1).grid(row=1, column=3, sticky="w", padx=(6, 12), pady=(6, 0))
+        ttk.Label(frame, text="Floor mode").grid(row=1, column=4, sticky="w", pady=(6, 0))
+        ttk.Combobox(frame, state="readonly", values=("percentile_shift", "soft_clip"), textvariable=self.output_floor_mode, width=16).grid(row=1, column=5, sticky="w", padx=(6, 0), pady=(6, 0))
+
+    def _build_stats_controls(self, parent: ttk.Frame, row: int) -> None:
+        frame = self._section(parent, "Stats", row, 0, 4)
+        ttk.Label(frame, textvariable=self.stats_text, style="Muted.TLabel", justify="left").pack(anchor="w")
+
+    def current_method(self) -> str:
+        return self.method_values.get(self.method_label.get(), BACKGROUND_HYBRID)
+
+    def current_galaxy_center(self) -> tuple[float, float] | None:
+        if self.auto_center.get():
+            return None
+        return float(self.galaxy_center_x.get()), float(self.galaxy_center_y.get())
+
+    def current_galaxy_axes(self) -> tuple[float, float]:
+        halo = max(0.1, float(self.mask_galaxy_halo_strength.get()))
+        return max(1.0, float(self.galaxy_axis_a.get()) * halo), max(1.0, float(self.galaxy_axis_b.get()) * halo)
+
+    def render_preview(self) -> None:
         try:
-            value = float(self.radius.get())
-        except (tk.TclError, ValueError):
-            value = 0.47
-        value = min(0.95, max(0.10, value))
-        self.radius.set(value)
-        return value
-
-    def current_softness(self) -> float:
-        try:
-            value = float(self.softness.get())
-        except (tk.TclError, ValueError):
-            value = 0.045
-        value = min(0.50, max(0.001, value))
-        self.softness.set(value)
-        return value
-
-    def current_outside_intensity(self) -> float:
-        try:
-            value = float(self.outside_intensity.get())
-        except (tk.TclError, ValueError):
-            value = 0.0
-        value = min(1.0, max(0.0, value))
-        self.outside_intensity.set(value)
-        return value
-
-    def selected_band_name(self) -> str:
-        return self.selected_band.get() or (self.available_bands[0] if self.available_bands else "")
-
-    def label_for_mode(self, mode: str) -> str:
-        return next((label for label, value in self.mode_labels.items() if value == mode), "Off")
-
-    def store_selected_band_settings(self) -> None:
-        band = self.current_background_band or self.selected_band_name()
-        if not band:
-            return
-        self.band_settings[band] = {
-            "mode": self.current_mode(),
-            "radius": self.current_radius(),
-            "softness": self.current_softness(),
-            "outside_correction": self.current_outside_intensity(),
-            "outside_level": self.current_outside_level(),
-        }
-
-    def load_selected_band_settings(self) -> None:
-        band = self.selected_band_name()
-        settings = self.band_settings.get(band, {})
-        self.mode_label.set(self.label_for_mode(str(settings.get("mode", BACKGROUND_OFF))))
-        self.radius.set(float(settings.get("radius", 0.47)))
-        self.softness.set(float(settings.get("softness", 0.045)))
-        self.outside_intensity.set(float(settings.get("outside_correction", 0.0)))
-        self.outside_level.set(float(settings.get("outside_level", 0.0)))
-        self.current_background_band = band
-        self.update_controls_state()
-
-    def on_band_selected(self, _event: object | None = None) -> None:
-        self.store_selected_band_settings()
-        self.load_selected_band_settings()
-        self.status.set(f"Band {self.selected_band_name()} selected. Adjust settings and update the preview.")
-
-    def current_outside_level(self) -> float:
-        try:
-            value = float(self.outside_level.get())
-        except (tk.TclError, ValueError):
-            value = 0.0
-        value = min(1.0, max(0.0, value))
-        self.outside_level.set(value)
-        return value
-
-    def on_mode_selected(self, _event: object | None = None) -> None:
-        self.update_controls_state()
-        self.status.set(f"Band {self.selected_band_name()} mode changed. Click Update preview to apply it.")
-
-    def update_controls_state(self) -> None:
-        state = "normal" if self.current_mode() == BACKGROUND_VALID_FIELD_MASK else "disabled"
-        self.radius_spinbox.configure(state=state)
-        self.softness_spinbox.configure(state=state)
-        self.outside_intensity_spinbox.configure(state=state)
-        self.outside_level_spinbox.configure(state=state)
-
-    def corrected_stacked(self) -> dict[str, np.ndarray]:
-        self.store_selected_band_settings()
-        corrected = {}
-        for band, image in self.source_stacked.items():
-            settings = self.band_settings.get(band, {})
-            mode = str(settings.get("mode", BACKGROUND_OFF))
-            radius = float(settings.get("radius", 0.47))
-            softness = float(settings.get("softness", 0.045))
-            outside_correction = float(settings.get("outside_correction", 0.0))
-            outside_level = float(settings.get("outside_level", 0.0))
-            corrected[band] = apply_background_correction(
-                {band: image},
-                mode,
-                radius,
-                softness,
-                outside_correction,
-                outside_level,
-            )[band]
-        return corrected
+            self.last_result = remove_background_gradient(
+                self.source_rgb,
+                method=self.current_method(),
+                star_sigma_threshold=float(self.star_sigma_threshold.get()),
+                star_mask_dilation_px=int(self.star_mask_dilation_px.get()),
+                protect_galaxy=bool(self.protect_galaxy.get() and self.mask_galaxy_core.get()),
+                galaxy_center=self.current_galaxy_center(),
+                galaxy_axes=self.current_galaxy_axes(),
+                galaxy_angle=float(self.galaxy_angle.get()),
+                grid_size=int(self.grid_size.get()),
+                smoothing_sigma=float(self.smoothing_sigma.get()),
+                polynomial_order=int(self.polynomial_order.get()),
+                sigma_clip=bool(self.sigma_clip_enabled.get()),
+                sigma_clip_sigma=float(self.sigma_clip_sigma.get()),
+                correction_strength=float(self.correction_strength.get()),
+                neutralize_background=bool(self.neutralize_background.get()),
+                black_point_percentile=float(self.black_point_percentile.get()),
+                avoid_clipping=bool(self.avoid_clipping.get()),
+                debug=True,
+            )
+            self.update_stats()
+            self.display_preview_image()
+            self.status.set("Preview updated. Press Apply to save this correction.")
+        except Exception as exc:
+            self.status.set(f"Preview failed: {exc}")
+            messagebox.showerror("Background correction error", str(exc), parent=self)
 
     def handle_update_preview(self) -> str:
         self.render_preview()
-        if hasattr(self, "update_button"):
-            self.update_button.focus_set()
+        self.update_button.focus_set()
         return "break"
 
-    def render_preview(self) -> None:
-        corrected = self.corrected_stacked()
-        rgb = create_available_channel_rgb(corrected, stretch=5, q_value=8)
-        self.preview_pil_image = ImageOps.flip(Image.fromarray(rgb).convert("RGB"))
-        self.display_preview_image()
-        self.status.set(self.format_status_message())
+    def update_stats(self) -> None:
+        stats = (self.last_result or {}).get("stats", {}) if self.last_result else {}
+        before = stats.get("background_median_before", [0, 0, 0])
+        after = stats.get("background_median_after", [0, 0, 0])
+        self.stats_text.set(
+            f"Sky pixels used: {float(stats.get('sky_pixels_used_percent', 0.0)):.1f}%\n"
+            f"Background median before R/G/B: {before[0]:.4g} / {before[1]:.4g} / {before[2]:.4g}\n"
+            f"Background median after R/G/B: {after[0]:.4g} / {after[1]:.4g} / {after[2]:.4g}\n"
+            f"Clipped pixels: {float(stats.get('clipped_pixels_percent', 0.0)):.3f}%\n"
+            f"Method used: {stats.get('method', self.current_method())}"
+        )
 
-    def format_status_message(self) -> str:
-        active = [
-            f"{band}: {self.label_for_mode(str(settings['mode']))}"
-            for band, settings in self.band_settings.items()
-            if settings.get("mode") != BACKGROUND_OFF
-        ]
-        summary = "; ".join(active) if active else "no band corrections"
-        return f"Preview updated for {self.selected_band_name()}. Current corrections: {summary}."
+    def preview_array(self) -> np.ndarray:
+        if not self.last_result:
+            return self.normalized_rgb(self.source_rgb)
+        mode = self.preview_mode.get()
+        corrected = np.asarray(self.last_result["corrected"])
+        background = np.asarray(self.last_result["background_model"])
+        residual = np.asarray(self.last_result["residual"])
+        debug_images = self.last_result.get("debug_images", {}) if isinstance(self.last_result, dict) else {}
+        if mode == "Original":
+            return self.normalized_rgb(self.source_rgb)
+        if mode == "Mask":
+            mask_img = np.asarray(debug_images.get("mask", np.zeros_like(self.source_rgb)))
+            if self.overlay_mask.get():
+                base = self.normalized_rgb(self.source_rgb)
+                return np.clip(base * 0.55 + mask_img * 0.75, 0, 1)
+            return np.clip(mask_img, 0, 1)
+        if mode == "Background model":
+            return self.normalized_rgb(background)
+        if mode == "Corrected linear":
+            return self.normalized_rgb(corrected)
+        if mode == "Residual background":
+            return self.normalized_rgb(residual, 1.0, 99.0)
+        if mode == "Before / After":
+            before, after = self.before_after_preview(self.source_rgb, corrected)
+            separator = np.ones((before.shape[0], 4, 3), dtype=np.float32)
+            return np.concatenate((before, separator, after), axis=1)
+        return self.normalized_rgb(corrected, 1.0, 99.5)
+
+    def normalized_rgb(self, image: np.ndarray, low: float = 0.3, high: float = 99.7) -> np.ndarray:
+        data = np.asarray(image, dtype=np.float32)
+        output = np.zeros_like(data, dtype=np.float32)
+        for channel in range(3):
+            plane = np.nan_to_num(data[..., channel], nan=0.0, posinf=0.0, neginf=0.0)
+            lo, hi = np.percentile(plane, [low, high])
+            if hi <= lo:
+                hi = lo + 1.0
+            output[..., channel] = np.clip((plane - lo) / (hi - lo), 0, 1)
+        return output
+
+    def before_after_preview(self, before_rgb: np.ndarray, after_rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        combined = np.concatenate((before_rgb.reshape(-1, 3), after_rgb.reshape(-1, 3)), axis=0)
+        lows = np.percentile(combined, 0.3, axis=0)
+        highs = np.percentile(combined, 99.7, axis=0)
+        highs = np.where(highs <= lows, lows + 1.0, highs)
+        before = np.clip((before_rgb - lows.reshape(1, 1, 3)) / (highs - lows).reshape(1, 1, 3), 0, 1)
+        after = np.clip((after_rgb - lows.reshape(1, 1, 3)) / (highs - lows).reshape(1, 1, 3), 0, 1)
+        return before.astype(np.float32), after.astype(np.float32)
 
     def display_preview_image(self) -> None:
-        if self.preview_pil_image is None:
-            return
+        array = self.preview_array()
+        image = Image.fromarray(np.uint8(np.clip(array, 0, 1) * 255)).convert("RGB")
+        self.preview_pil_image = ImageOps.flip(image)
         canvas_width = max(1, self.preview_canvas.winfo_width())
         canvas_height = max(1, self.preview_canvas.winfo_height())
         image_width, image_height = self.preview_pil_image.size
@@ -884,27 +924,125 @@ class BackgroundCorrectionWindow(tk.Toplevel):
         preview = self.preview_pil_image.resize((display_width, display_height), Image.Resampling.LANCZOS)
         self.preview_image = ImageTk.PhotoImage(preview)
         self.preview_canvas.delete("all")
+        self.preview_geometry = (origin_x, origin_y, scale, image_width, image_height)
         self.preview_canvas.create_image(origin_x, origin_y, image=self.preview_image, anchor="nw")
+        self.draw_galaxy_ellipse()
 
-    def save_image(self) -> None:
+    def canvas_to_image(self, canvas_x: float, canvas_y: float) -> tuple[float, float] | None:
+        if not self.preview_geometry:
+            return None
+        origin_x, origin_y, scale, image_width, image_height = self.preview_geometry
+        image_x = (canvas_x - origin_x) / scale
+        display_y = (canvas_y - origin_y) / scale
+        image_y = image_height - 1 - display_y
+        if image_x < 0 or image_y < 0 or image_x >= image_width or image_y >= image_height:
+            return None
+        return image_x, image_y
+
+    def image_to_canvas(self, image_x: float, image_y: float) -> tuple[float, float] | None:
+        if not self.preview_geometry:
+            return None
+        origin_x, origin_y, scale, _image_width, image_height = self.preview_geometry
+        canvas_x = origin_x + image_x * scale
+        canvas_y = origin_y + (image_height - 1 - image_y) * scale
+        return canvas_x, canvas_y
+
+    def start_galaxy_drag(self, event: tk.Event) -> None:
+        point = self.canvas_to_image(event.x, event.y)
+        if point is not None:
+            self.drag_start = point
+
+    def finish_galaxy_drag(self, event: tk.Event) -> None:
+        if self.drag_start is None:
+            return
+        end = self.canvas_to_image(event.x, event.y)
+        start = self.drag_start
+        self.drag_start = None
+        if end is None:
+            return
+        x0, y0 = start
+        x1, y1 = end
+        axis_a = abs(x1 - x0) / 2.0
+        axis_b = abs(y1 - y0) / 2.0
+        if axis_a < 4 or axis_b < 4:
+            return
+        self.auto_center.set(False)
+        self.galaxy_center_x.set((x0 + x1) / 2.0)
+        self.galaxy_center_y.set((y0 + y1) / 2.0)
+        self.galaxy_axis_a.set(axis_a)
+        self.galaxy_axis_b.set(axis_b)
+        self.galaxy_angle.set(0.0)
+        self.status.set("Galaxy protection ellipse updated from preview drag. Click Update preview to recalculate.")
+        self.display_preview_image()
+
+    def draw_galaxy_ellipse(self) -> None:
+        if not bool(self.protect_galaxy.get()):
+            return
+        center = self.image_to_canvas(float(self.galaxy_center_x.get()), float(self.galaxy_center_y.get()))
+        if center is None or not self.preview_geometry:
+            return
+        _origin_x, _origin_y, scale, _image_width, _image_height = self.preview_geometry
+        cx, cy = center
+        axis_a = max(1.0, float(self.galaxy_axis_a.get()) * scale)
+        axis_b = max(1.0, float(self.galaxy_axis_b.get()) * scale)
+        self.preview_canvas.create_oval(
+            cx - axis_a,
+            cy - axis_b,
+            cx + axis_a,
+            cy + axis_b,
+            outline=ACCENT,
+            width=2,
+            dash=(5, 4),
+        )
+
+    def corrected_stacked(self) -> dict[str, np.ndarray]:
+        if self.last_result is None:
+            self.render_preview()
+        corrected_rgb = np.asarray((self.last_result or {}).get("corrected", self.source_rgb), dtype=np.float32)
+        corrected = {band: np.array(image, copy=True) for band, image in self.source_stacked.items()}
+        channel_map = {"R": 0, "V": 1, "B": 2}
+        for band, index in channel_map.items():
+            if band in corrected:
+                corrected[band] = corrected_rgb[..., index]
+        return corrected
+
+    def apply(self) -> None:
         corrected = self.corrected_stacked()
         self.result.stacked = corrected
         self.result.rgb = create_available_channel_rgb(corrected, stretch=5, q_value=8)
-        self.result.background_correction = "per_band"
-        self.result.background_band_corrections = self.band_settings.copy()
-        first_active = next(
-            (settings for settings in self.band_settings.values() if settings.get("mode") != BACKGROUND_OFF),
-            None,
-        )
-        if first_active:
-            self.result.background_mask_radius = float(first_active.get("radius", 0.47))
-            self.result.background_mask_softness = float(first_active.get("softness", 0.045))
-            self.result.background_outside_intensity = float(first_active.get("outside_correction", 0.0))
-            self.result.background_outside_level = float(first_active.get("outside_level", 0.0))
+        self.result.background_correction = "gradient_extraction"
+        self.result.background_band_corrections = {}
+        self.result.background_extraction_stats = (self.last_result or {}).get("stats", {})
         save_rgb_image(self.result.rgb, self.result.output_file)
         self.parent.on_background_correction_saved(self.result, self.manual_offsets)
         self.cleanup()
         self.destroy()
+
+    def save_debug_images(self) -> None:
+        if self.last_result is None:
+            self.render_preview()
+        folder = filedialog.askdirectory(title="Select debug output folder", parent=self)
+        if not folder:
+            return
+        output_dir = Path(folder)
+        debug_images = dict((self.last_result or {}).get("debug_images", {}))
+        corrected = np.asarray((self.last_result or {}).get("corrected", self.source_rgb))
+        before, after = self.before_after_preview(self.source_rgb, corrected)
+        debug_images["before_after"] = np.concatenate((before, np.ones((before.shape[0], 4, 3), dtype=np.float32), after), axis=1)
+        names = {
+            "original_preview": "original_preview.png",
+            "mask": "mask.png",
+            "background_model": "background_model.png",
+            "corrected_linear": "corrected_linear.png",
+            "corrected_stretched": "corrected_stretched.png",
+            "residual_background": "residual_background.png",
+            "before_after": "before_after.png",
+        }
+        for key, filename in names.items():
+            if key in debug_images:
+                image = np.asarray(debug_images[key], dtype=np.float32)
+                Image.fromarray(np.uint8(np.clip(image, 0, 1) * 255)).save(output_dir / filename)
+        self.status.set(f"Debug images saved to: {output_dir}")
 
     def cleanup(self) -> None:
         self.unbind_all("<space>")
@@ -913,6 +1051,7 @@ class BackgroundCorrectionWindow(tk.Toplevel):
         self.parent.on_background_correction_cancelled()
         self.cleanup()
         self.destroy()
+
 class ObjectFilterWindow(tk.Toplevel):
     def __init__(
         self,
@@ -1632,6 +1771,16 @@ class ReductionApp(tk.Tk):
             BACKGROUND_AUTOMATIC: "automatic background correction",
             BACKGROUND_VALID_FIELD_MASK: "valid field mask",
         }
+        if mode == "gradient_extraction":
+            stats = getattr(result, "background_extraction_stats", {}) or {}
+            before = stats.get("background_median_before", [0, 0, 0])
+            after = stats.get("background_median_after", [0, 0, 0])
+            return (
+                "Background correction: gradient extraction "
+                f"({stats.get('method', 'unknown')}, sky pixels={float(stats.get('sky_pixels_used_percent', 0.0)):.1f}%, "
+                f"before R/G/B={before[0]:.4g}/{before[1]:.4g}/{before[2]:.4g}, "
+                f"after R/G/B={after[0]:.4g}/{after[1]:.4g}/{after[2]:.4g})."
+            )
         if mode == "per_band":
             corrections = getattr(result, "background_band_corrections", {}) or {}
             parts = []
