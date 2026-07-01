@@ -6,14 +6,17 @@ build-backend = "setuptools.build_meta"
 name = "astronomical-image-reduction-tool"
 version = "0.1.0"
 description = "Astronomical Image Reduction Tool"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "PySide6",
-    "numpy",
-    "astropy",
-    "scipy",
-    "matplotlib",
-    "Pillow"
+    "astropy>=6.0",
+    "astroalign>=2.5",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "Pillow>=10.0",
+    "PySide6>=6.7",
+    "scikit-image>=0.22",
+    "scipy>=1.11",
 ]
 
 [tool.setuptools]
@@ -21,3 +24,10 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+airt = [
+    "resources/icons/*",
+    "resources/images/*",
+    "resources/styles/*",
+]

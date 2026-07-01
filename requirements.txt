@@ -1,7 +1,8 @@
-astropy>=6.0
+﻿astropy>=6.0
 astroalign>=2.5
 matplotlib>=3.8
 numpy>=1.26
+Pillow>=10.0
+PySide6>=6.7
 scikit-image>=0.22
 scipy>=1.11
-PySide6

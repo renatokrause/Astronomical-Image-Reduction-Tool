@@ -1,3 +1,11 @@
 @echo off
 cd /d "%~dp0"
-".venv\Scripts\python.exe" app.py
+
+if exist ".venv\Scripts\python.exe" (
+    set "PYTHON_EXE=.venv\Scripts\python.exe"
+) else (
+    set "PYTHON_EXE=python"
+)
+
+set "PYTHONPATH=%CD%\src"
+"%PYTHON_EXE%" -m airt
