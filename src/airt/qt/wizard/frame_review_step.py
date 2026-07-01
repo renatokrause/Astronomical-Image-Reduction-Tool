@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from airt.qt.widgets.fits_preview_dialog import FitsPreviewDialog
+from airt.project import autosave_project
 
 
 class FrameReviewStep(QWidget):
@@ -27,6 +28,7 @@ class FrameReviewStep(QWidget):
         self.all_files = []
         self.displayed_files = []
         self.selection_state: dict[str, bool] = {}
+        self._loading_table = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -107,6 +109,7 @@ class FrameReviewStep(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setMinimumHeight(460)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.itemChanged.connect(self.on_table_item_changed)
 
         table_layout.addWidget(self.table)
         root.addWidget(table_card)
@@ -296,13 +299,46 @@ class FrameReviewStep(QWidget):
     def set_visible_checked(self, checked: bool):
         state = Qt.Checked if checked else Qt.Unchecked
 
+        self._loading_table = True
+        self.table.blockSignals(True)
+
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
             if item:
                 item.setCheckState(state)
 
+        self.table.blockSignals(False)
+        self._loading_table = False
+
         self.sync_displayed_selection()
         self.update_summary()
+        self.persist_selection()
+
+    def on_table_item_changed(self, item):
+        if self._loading_table:
+            return
+
+        if item.column() != 0:
+            return
+
+        self.sync_displayed_selection()
+        self.update_summary()
+        self.persist_selection()
+
+    def persist_selection(self):
+        if not self.wizard.project:
+            return
+
+        self.save_to_project()
+
+        try:
+            if self.wizard.project.project_file:
+                autosave_project(self.wizard.project)
+                if hasattr(self.wizard, "mark_project_recent"):
+                    self.wizard.mark_project_recent()
+                self.wizard.footer.set_status("Frame selection saved.")
+        except Exception as exc:
+            self.wizard.footer.set_status(f"Could not autosave frame selection: {exc}")
 
     def preview_selected_visible(self):
         self.sync_displayed_selection()
@@ -387,3 +423,4 @@ class FrameReviewStep(QWidget):
         self.wizard.footer.set_status("Frame selection saved.")
         self.wizard.go_to_step(4)
         return False
+

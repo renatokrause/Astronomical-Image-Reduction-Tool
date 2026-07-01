@@ -91,7 +91,7 @@ class FitsPreviewDialog(QDialog):
 
         self.file_list = QListWidget()
         self.file_list.setMinimumWidth(360)
-        self.file_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.file_list.setSelectionMode(QAbstractItemView.MultiSelection)
         self.file_list.itemSelectionChanged.connect(self.load_selected_files)
 
         for item in self.files:
@@ -282,3 +282,4 @@ class FitsPreviewDialog(QDialog):
 
         self.view.resetTransform()
         self.view.fitInView(self.current_pixmap_item, Qt.KeepAspectRatio)
+
