@@ -200,6 +200,9 @@ class FilesStep(QWidget):
         self.wizard.footer.set_status("Scan complete.")
         self.scan_button.setEnabled(True)
 
+    def display_band(self, band: str) -> str:
+        return "None" if band == "-" else band
+
     def populate_summary(self) -> None:
         result = self.scan_result
         if not result:
@@ -210,7 +213,7 @@ class FilesStep(QWidget):
         for row_index, row in enumerate(result.summary):
             values = [
                 row.kind.upper(),
-                row.band,
+                self.display_band(row.band),
                 str(row.count),
                 row.status,
                 row.problems,
@@ -234,7 +237,7 @@ class FilesStep(QWidget):
         if bands:
             self.bands_label.setText(
                 "Detected bands: "
-                + ", ".join(bands)
+                + ", ".join(self.display_band(band) for band in bands)
                 + ". Band-to-color mapping will be configured in a later step."
             )
         else:
@@ -259,5 +262,6 @@ class FilesStep(QWidget):
 
         self.wizard.go_to_step(3)
         return False
+
 
 

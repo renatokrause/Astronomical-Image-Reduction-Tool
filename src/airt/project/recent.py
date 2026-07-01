@@ -1,10 +1,13 @@
 ﻿from __future__ import annotations
 
 from pathlib import Path
+import ctypes
 import json
+import os
+import sys
 
 
-MAX_RECENT_PROJECTS = 10
+MAX_RECENT_PROJECTS = 5
 
 
 def app_state_dir() -> Path:
@@ -17,11 +20,60 @@ def recent_projects_file() -> Path:
     return app_state_dir() / "recent_projects.json"
 
 
+def windows_documents_dir() -> Path | None:
+    if sys.platform != "win32":
+        return None
+
+    # FOLDERID_Documents
+    folderid_documents = ctypes.c_char * 16
+    folderid = folderid_documents(
+        0xFDD39AD0.to_bytes(4, "little")
+        + 0x238F.to_bytes(2, "little")
+        + 0x46AF.to_bytes(2, "big")
+        + bytes.fromhex("ADB4 6C85480369C7".replace(" ", ""))
+    )
+
+    path_ptr = ctypes.c_wchar_p()
+
+    try:
+        result = ctypes.windll.shell32.SHGetKnownFolderPath(
+            ctypes.byref(folderid),
+            0,
+            None,
+            ctypes.byref(path_ptr),
+        )
+
+        if result == 0 and path_ptr.value:
+            return Path(path_ptr.value)
+    except Exception:
+        return None
+
+    return None
+
+
+def user_documents_dir() -> Path:
+    win_docs = windows_documents_dir()
+    if win_docs and win_docs.exists():
+        return win_docs
+
+    candidates = [
+        Path.home() / "Documents",
+        Path.home() / "Documentos",
+        Path(os.environ.get("USERPROFILE", "")) / "Documents",
+        Path(os.environ.get("USERPROFILE", "")) / "Documentos",
+    ]
+
+    for candidate in candidates:
+        if str(candidate).strip() and candidate.exists():
+            return candidate
+
+    return Path.home()
+
+
 def default_projects_dir() -> Path:
-    # User-requested default location on Windows/Portuguese systems.
-    preferred = Path.home() / "Documentos" / "AIRT-projects"
-    preferred.mkdir(parents=True, exist_ok=True)
-    return preferred
+    path = user_documents_dir() / "AIRT-projects"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def load_recent_projects() -> list[dict[str, str]]:

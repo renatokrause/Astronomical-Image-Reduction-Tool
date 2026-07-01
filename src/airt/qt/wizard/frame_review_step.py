@@ -25,6 +25,7 @@ class FrameReviewStep(QWidget):
         super().__init__()
         self.wizard = wizard
         self.all_files = []
+        self.displayed_files = []
         self.selection_state: dict[str, bool] = {}
 
         outer = QVBoxLayout(self)
@@ -129,7 +130,6 @@ class FrameReviewStep(QWidget):
         self.wizard.footer.back_button.setEnabled(True)
         self.wizard.footer.next_button.setEnabled(True)
         self.wizard.footer.set_status("Review object and calibration frames.")
-
         self.load_from_scan_result()
 
     def display_kind(self, kind: str) -> str:
@@ -150,6 +150,7 @@ class FrameReviewStep(QWidget):
                 "No scan result is available. Go back to Files and scan the project first.",
             )
             self.all_files = []
+            self.displayed_files = []
             self.selection_state = {}
             self.populate_filters()
             self.populate_table()
@@ -162,6 +163,7 @@ class FrameReviewStep(QWidget):
 
     def initialize_selection_state(self):
         project = self.wizard.project
+        previous_state = dict(self.selection_state)
         self.selection_state = {}
 
         selected_paths = set()
@@ -181,7 +183,9 @@ class FrameReviewStep(QWidget):
                 rejected_paths.update(values)
 
         for item in self.all_files:
-            if item.path in rejected_paths:
+            if item.path in previous_state:
+                self.selection_state[item.path] = previous_state[item.path]
+            elif item.path in rejected_paths:
                 self.selection_state[item.path] = False
             elif item.path in selected_paths:
                 self.selection_state[item.path] = True
@@ -189,12 +193,12 @@ class FrameReviewStep(QWidget):
                 self.selection_state[item.path] = item.status != "Error"
 
     def on_filter_changed(self):
-        self.sync_visible_selection()
+        self.sync_displayed_selection()
         self.populate_table()
 
     def populate_filters(self):
-        current_kind = self.kind_filter.currentText()
-        current_band = self.band_filter.currentText()
+        current_kind_data = self.kind_filter.currentData()
+        current_band_data = self.band_filter.currentData()
 
         self.kind_filter.blockSignals(True)
         self.band_filter.blockSignals(True)
@@ -202,9 +206,7 @@ class FrameReviewStep(QWidget):
         self.kind_filter.clear()
         self.kind_filter.addItem("All", "")
 
-        kind_order = ["object", "bias", "dark", "flat", "focus"]
-
-        for kind in kind_order:
+        for kind in ["object", "bias", "dark", "flat", "focus"]:
             if any(item.kind == kind for item in self.all_files):
                 self.kind_filter.addItem(self.display_kind(kind), kind)
 
@@ -215,18 +217,18 @@ class FrameReviewStep(QWidget):
         for band in bands:
             self.band_filter.addItem(self.display_band(band), band)
 
-        kind_index = self.kind_filter.findText(current_kind)
+        kind_index = self.kind_filter.findData(current_kind_data)
         if kind_index >= 0:
             self.kind_filter.setCurrentIndex(kind_index)
 
-        band_index = self.band_filter.findText(current_band)
+        band_index = self.band_filter.findData(current_band_data)
         if band_index >= 0:
             self.band_filter.setCurrentIndex(band_index)
 
         self.kind_filter.blockSignals(False)
         self.band_filter.blockSignals(False)
 
-    def visible_files(self):
+    def filtered_files(self):
         kind_data = self.kind_filter.currentData()
         band_data = self.band_filter.currentData()
 
@@ -241,12 +243,12 @@ class FrameReviewStep(QWidget):
         return files
 
     def populate_table(self):
-        files = self.visible_files()
+        self.displayed_files = self.filtered_files()
 
         self.table.blockSignals(True)
-        self.table.setRowCount(len(files))
+        self.table.setRowCount(len(self.displayed_files))
 
-        for row, item in enumerate(files):
+        for row, item in enumerate(self.displayed_files):
             use_item = QTableWidgetItem()
             use_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             use_item.setCheckState(Qt.Checked if self.selection_state.get(item.path, False) else Qt.Unchecked)
@@ -285,10 +287,8 @@ class FrameReviewStep(QWidget):
         self.table.resizeColumnsToContents()
         self.update_summary()
 
-    def sync_visible_selection(self):
-        files = self.visible_files()
-
-        for row, item in enumerate(files):
+    def sync_displayed_selection(self):
+        for row, item in enumerate(self.displayed_files):
             checkbox = self.table.item(row, 0)
             if checkbox:
                 self.selection_state[item.path] = checkbox.checkState() == Qt.Checked
@@ -301,15 +301,15 @@ class FrameReviewStep(QWidget):
             if item:
                 item.setCheckState(state)
 
-        self.sync_visible_selection()
+        self.sync_displayed_selection()
         self.update_summary()
 
     def preview_selected_visible(self):
-        self.sync_visible_selection()
+        self.sync_displayed_selection()
 
         selected_visible = [
             item
-            for item in self.visible_files()
+            for item in self.displayed_files
             if self.selection_state.get(item.path, False)
         ]
 
@@ -317,7 +317,7 @@ class FrameReviewStep(QWidget):
             QMessageBox.information(
                 self,
                 "No selected files",
-                "There are no selected files in the current filter."
+                "There are no selected files in the current filter.",
             )
             return
 
@@ -325,7 +325,7 @@ class FrameReviewStep(QWidget):
         dialog.exec()
 
     def save_to_project(self):
-        self.sync_visible_selection()
+        self.sync_displayed_selection()
 
         project = self.wizard.ensure_project()
 
@@ -346,9 +346,9 @@ class FrameReviewStep(QWidget):
 
             if item.kind == "object":
                 if selected:
-                    project.selected_object_files.setdefault(self.display_band(item.band), []).append(item.path)
+                    project.selected_object_files.setdefault(item.band, []).append(item.path)
                 else:
-                    project.rejected_object_files.setdefault(self.display_band(item.band), []).append(item.path)
+                    project.rejected_object_files.setdefault(item.band, []).append(item.path)
             else:
                 key = f"{item.kind}:{item.band}"
                 if selected:
@@ -387,4 +387,3 @@ class FrameReviewStep(QWidget):
         self.wizard.footer.set_status("Frame selection saved.")
         self.wizard.go_to_step(4)
         return False
-
