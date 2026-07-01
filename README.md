@@ -146,19 +146,20 @@ This creates `AIRT.desktop` in the project folder. Some desktop environments req
 7. Uses one `V` image as the alignment reference when available, otherwise uses another available filter.
 8. Aligns and stacks the images for each filter.
 9. Optionally aligns the final stacked bands before RGB composition, depending on the selected alignment mode.
-10. Opens a final background-extraction preview before saving the image.
-11. Optionally estimates and removes a smooth RGB background gradient using the selected model and masks.
-12. Subtracts the sky background.
-13. Generates the final image with the available color channels.
-14. Saves the PNG result in the selected Output folder.
+10. Opens a final background-correction preview before saving the image.
+11. Optionally removes smooth background gradients independently in each stacked band.
+12. Composes a linear RGB image from the corrected bands.
+13. Optionally neutralizes the RGB sky background using only unmasked sky pixels.
+14. Applies the final stretch for export.
+15. Saves the PNG result in the selected Output folder.
 
 ## Notes
 
 - File names must identify the filter, for example `_B_`, `_V_`, `_R_`, or end with `B.FITS`, `V.FITS`, `R.FITS`.
 - `R`, `V` and `B` are mapped to red, green and blue. If only one or two filters are available, the missing channels are left empty.
 - Alignment mode can be set to no band adjustment, automatic band alignment, or manual band adjustment. No band adjustment keeps the previous composition behavior. Automatic mode aligns the final stacked bands before RGB composition, using `V` as the reference when available, otherwise the first available color band. Manual mode starts from the automatic alignment and opens a preview window where each RGB channel can be shifted before saving.
-- Background correction defaults to `Off` on the main screen. When it is turned `On`, a final Background Extraction preview opens before the PNG is saved. The preview works on the RGB image and can show `Original`, `Mask`, `Background model`, `Corrected linear`, `Corrected stretched`, `Before / After`, and `Residual background` views. Available background models include polynomial gradient removal, median-grid background extraction, Photutils `Background2D` when installed, and a hybrid mask + model + neutralization mode. The mask protects detected stars and an adjustable galaxy ellipse, then estimates the background only from unmasked sky pixels.
+- Background correction defaults to `Off` on the main screen. When it is turned `On`, the final preview uses the same processing functions as the pipeline: per-band background removal, linear RGB composition, RGB background neutralization, and final stretch. Available methods are `median_grid`, `polynomial`, and `hybrid`; the hybrid method can use Photutils internally when available and otherwise falls back to median-grid plus polynomial modeling. The mask protects detected stars and an adjustable elliptical object region, then estimates the background only from unmasked sky pixels.
 - The `I` filter is scanned, but is not yet used in the RGB composition.
 - The automatic scan counts and classifies FITS files by folder and filter. It does not create masters, reduce images, align images or save output files.
 - Manual band adjustment provides a preview window with per-channel X/Y offsets, arrow controls and reset actions before confirming the alignment. The final save happens after the background-extraction preview.
-- The Background Extraction window can save debug images for the original preview, mask, background model, corrected linear image, corrected stretched image, residual background, and before/after comparison.
+- The Background Correction window can save debug images for each band original, mask, background model, corrected band, RGB before neutralization, RGB after neutralization, final stretched image, before/after comparison, and `processing_stats.json`.
