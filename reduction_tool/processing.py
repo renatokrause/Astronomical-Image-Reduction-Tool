@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-from astropy.visualization import make_lupton_rgb
 
 from .calibration import create_master_bias, create_master_flat, reduce_image
 from .io import scan_project
@@ -229,18 +228,37 @@ def normalise_preview(image: np.ndarray, low: float = 0.3, high: float = 99.7) -
     return output
 
 
-def build_star_mask(image: np.ndarray, sigma_threshold: float = 3.0, dilation_px: int = 3) -> np.ndarray:
+def build_star_mask(
+    image: np.ndarray,
+    sigma_threshold: float = 5.0,
+    dilation_px: int = 2,
+    highpass_sigma: float = 20.0,
+) -> np.ndarray:
     data = _safe_float_image(image)
     try:
-        from scipy.ndimage import gaussian_filter
+        from scipy.ndimage import gaussian_filter, label, maximum_filter
 
-        residual = data - gaussian_filter(data, sigma=3.0, mode="nearest")
+        smooth = gaussian_filter(data, sigma=max(3.0, float(highpass_sigma)), mode="nearest")
+        residual = data - smooth
+        median, sigma = _robust_sigma(residual)
+        threshold = median + max(0.5, float(sigma_threshold)) * sigma
+        candidates = residual > threshold
+        candidates &= residual >= maximum_filter(residual, size=3, mode="nearest") * 0.35
+        labeled, count = label(candidates)
+        if count:
+            max_component_area = max(16, int(data.size * 0.0025))
+            cleaned = np.zeros_like(candidates, dtype=bool)
+            for component in range(1, count + 1):
+                component_mask = labeled == component
+                area = int(np.count_nonzero(component_mask))
+                if 1 <= area <= max_component_area:
+                    cleaned |= component_mask
+            candidates = cleaned
     except Exception:
-        residual = data - np.median(data)
-    median, sigma = _robust_sigma(residual)
-    threshold = median + max(0.5, float(sigma_threshold)) * sigma
-    mask = residual > threshold
-    return _dilate_mask(mask, int(dilation_px))
+        smooth = data - np.median(data)
+        median, sigma = _robust_sigma(smooth)
+        candidates = smooth > median + max(0.5, float(sigma_threshold)) * sigma
+    return _dilate_mask(candidates, int(dilation_px))
 
 
 def build_elliptical_object_mask(
@@ -263,21 +281,69 @@ def build_elliptical_object_mask(
     return ((rotated_x / axis_a) ** 2 + (rotated_y / axis_b) ** 2) <= 1.0
 
 
-def auto_object_mask(image: np.ndarray, axes_scale: tuple[float, float] = (0.22, 0.16)) -> tuple[np.ndarray, dict[str, object]]:
+def auto_object_mask_geometry(image: np.ndarray, search_region_fraction: float = 0.45) -> dict[str, object]:
     data = _safe_float_image(image)
     height, width = data.shape
+    fallback = {
+        "center": (width / 2.0, height / 2.0),
+        "axes": (width * 0.10, height * 0.22),
+        "angle": 0.0,
+        "source": "fallback_center",
+    }
+    fraction = min(0.9, max(0.2, float(search_region_fraction)))
+    half_w = int(width * fraction / 2.0)
+    half_h = int(height * fraction / 2.0)
+    cx = width // 2
+    cy = height // 2
+    x0, x1 = max(0, cx - half_w), min(width, cx + half_w)
+    y0, y1 = max(0, cy - half_h), min(height, cy + half_h)
+    if x1 <= x0 or y1 <= y0:
+        return fallback
+    region = data[y0:y1, x0:x1]
     try:
-        from scipy.ndimage import gaussian_filter
+        from scipy.ndimage import gaussian_filter, label, center_of_mass
 
-        smoothed = gaussian_filter(data, sigma=max(4.0, min(height, width) / 80.0), mode="nearest")
+        smooth = gaussian_filter(region, sigma=max(6.0, min(height, width) / 45.0), mode="nearest")
+        median, sigma = _robust_sigma(smooth)
+        threshold = median + 1.5 * sigma
+        candidate = smooth > threshold
+        labeled, count = label(candidate)
+        best_label = 0
+        best_score = 0.0
+        for component in range(1, count + 1):
+            component_mask = labeled == component
+            area = int(np.count_nonzero(component_mask))
+            if area < max(20, region.size * 0.002) or area > region.size * 0.75:
+                continue
+            score = float(np.sum(smooth[component_mask])) * np.sqrt(area)
+            if score > best_score:
+                best_score = score
+                best_label = component
+        if best_label:
+            component_mask = labeled == best_label
+            local_y, local_x = center_of_mass(smooth, labels=component_mask, index=True)
+            center = (float(x0 + local_x), float(y0 + local_y))
+            edge_margin_x = width * (1.0 - fraction) / 2.0
+            edge_margin_y = height * (1.0 - fraction) / 2.0
+            if edge_margin_x <= center[0] <= width - edge_margin_x and edge_margin_y <= center[1] <= height - edge_margin_y:
+                return {
+                    "center": center,
+                    "axes": (width * 0.10, height * 0.22),
+                    "angle": 0.0,
+                    "source": "auto_central_region",
+                }
     except Exception:
-        smoothed = data
-    y, x = np.unravel_index(int(np.nanargmax(smoothed)), smoothed.shape)
-    axes = (width * axes_scale[0], height * axes_scale[1])
-    mask = build_elliptical_object_mask(data.shape, (float(x), float(y)), axes, 0.0)
-    return mask, {"center": (float(x), float(y)), "axes": axes, "angle": 0.0}
+        pass
+    return fallback
 
 
+def auto_object_mask(image: np.ndarray, axes_scale: tuple[float, float] = (0.10, 0.22)) -> tuple[np.ndarray, dict[str, object]]:
+    geometry = auto_object_mask_geometry(image)
+    center = geometry["center"]
+    axes = geometry.get("axes", (image.shape[1] * axes_scale[0], image.shape[0] * axes_scale[1]))
+    angle = float(geometry.get("angle", 0.0))
+    mask = build_elliptical_object_mask(image.shape, center, axes, angle)
+    return mask, geometry
 def _sky_stats(image: np.ndarray, sky_mask: np.ndarray) -> dict[str, float | list[float]]:
     values = np.asarray(image, dtype=float)[sky_mask]
     if values.size == 0:
@@ -288,6 +354,54 @@ def _sky_stats(image: np.ndarray, sky_mask: np.ndarray) -> dict[str, float | lis
         "percentiles": [float(v) for v in np.percentile(values, [1, 50, 99])],
     }
 
+
+
+def _edge_center_masks(shape: tuple[int, int], protected_mask: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    height, width = shape
+    y, x = np.ogrid[:height, :width]
+    margin_y = max(1, int(height * 0.12))
+    margin_x = max(1, int(width * 0.12))
+    edge = (x < margin_x) | (x >= width - margin_x) | (y < margin_y) | (y >= height - margin_y)
+    center_radius_x = width * 0.22
+    center_radius_y = height * 0.22
+    center = ((x - width / 2.0) / center_radius_x) ** 2 + ((y - height / 2.0) / center_radius_y) ** 2 <= 1.0
+    if protected_mask is not None:
+        usable = ~np.asarray(protected_mask, dtype=bool)
+        edge &= usable
+        center &= usable
+    return edge, center
+
+
+def _gradient_metrics(before: np.ndarray, after: np.ndarray, protected_mask: np.ndarray) -> dict[str, float]:
+    edge_mask, center_mask = _edge_center_masks(before.shape, protected_mask)
+    if not np.any(edge_mask) or not np.any(center_mask):
+        return {
+            "median_edge_before": 0.0,
+            "median_center_before": 0.0,
+            "median_edge_after": 0.0,
+            "median_center_after": 0.0,
+            "edge_center_delta_before": 0.0,
+            "edge_center_delta_after": 0.0,
+            "gradient_reduction_percent": 0.0,
+        }
+    edge_before = float(np.median(before[edge_mask]))
+    center_before = float(np.median(before[center_mask]))
+    edge_after = float(np.median(after[edge_mask]))
+    center_after = float(np.median(after[center_mask]))
+    delta_before = edge_before - center_before
+    delta_after = edge_after - center_after
+    reduction = 0.0
+    if abs(delta_before) > 1e-12:
+        reduction = (1.0 - abs(delta_after) / abs(delta_before)) * 100.0
+    return {
+        "median_edge_before": edge_before,
+        "median_center_before": center_before,
+        "median_edge_after": edge_after,
+        "median_center_after": center_after,
+        "edge_center_delta_before": delta_before,
+        "edge_center_delta_after": delta_after,
+        "gradient_reduction_percent": reduction,
+    }
 
 def _median_grid_background(
     image: np.ndarray,
@@ -411,15 +525,15 @@ def _estimate_band_background(
 def remove_band_background(
     image,
     method="hybrid",
-    star_sigma_threshold=3.0,
-    star_mask_dilation_px=3,
+    star_sigma_threshold=5.0,
+    star_mask_dilation_px=2,
     object_mask=None,
     grid_size=128,
     smoothing_sigma=5.0,
     polynomial_order=2,
     sigma_clip=True,
     sigma_clip_sigma=3.0,
-    correction_strength=0.9,
+    correction_strength=1.0,
     preserve_sky_median=True,
     debug=False,
 ):
@@ -462,10 +576,11 @@ def remove_band_background(
         sigma_clip_sigma,
     )
     sky_level = float(np.median(background_model[sky_mask])) if np.any(sky_mask) else float(np.median(background_model))
-    strength = min(1.0, max(0.0, float(correction_strength)))
+    strength = min(1.2, max(0.0, float(correction_strength)))
     correction_anchor = sky_level if preserve_sky_median else 0.0
     corrected = data - strength * (background_model - correction_anchor)
     after_stats = _sky_stats(corrected, sky_mask)
+    gradient = _gradient_metrics(data, corrected, protected_mask)
     stats = {
         "method": used_method,
         "sky_level": sky_level,
@@ -474,6 +589,7 @@ def remove_band_background(
         "after": after_stats,
         "star_pixels": int(np.count_nonzero(star_mask)),
         "object_pixels": int(np.count_nonzero(object_mask)) if object_mask is not None else 0,
+        "gradient_metrics": gradient,
         "parameters": {
             "star_sigma_threshold": float(star_sigma_threshold),
             "star_mask_dilation_px": int(star_mask_dilation_px),
@@ -544,21 +660,82 @@ def neutralize_rgb_background(rgb: np.ndarray, sky_mask: np.ndarray, strength: f
     return neutralized.astype(np.float32), stats
 
 
-def stretch_rgb(rgb: np.ndarray, method: str = "lupton", stretch: float = 0.5, q: float = 10) -> tuple[np.ndarray, dict[str, float]]:
+def final_stretch_rgb(
+    rgb: np.ndarray,
+    sky_mask: np.ndarray | None = None,
+    target_background_level: float = 0.04,
+    black_point_percentile: float = 0.5,
+    white_point_percentile: float = 99.7,
+    stretch_strength: float = 8.0,
+) -> tuple[np.ndarray, dict[str, object]]:
     data = _safe_float_image(rgb)
-    clipped_low = int(np.count_nonzero(data < 0))
-    if method == "lupton":
-        image = make_lupton_rgb(data[..., 0], data[..., 1], data[..., 2], stretch=stretch, Q=q)
+    if data.ndim != 3 or data.shape[2] != 3:
+        raise ValueError("rgb must be an RGB array with shape (height, width, 3).")
+    if sky_mask is None or np.asarray(sky_mask).shape != data.shape[:2] or not np.any(sky_mask):
+        mask = np.ones(data.shape[:2], dtype=bool)
     else:
-        preview = normalise_preview(data, 0.3, 99.7)
-        image = np.uint8(np.clip(preview, 0, 1) * 255)
-    stats = {"clipped_pixels_percent": float(clipped_low * 100.0 / max(1, data.size))}
-    return image, stats
+        mask = np.asarray(sky_mask, dtype=bool)
+
+    sky_median_before = np.array([float(np.median(data[..., channel][mask])) for channel in range(3)], dtype=np.float32)
+    black_point = np.array([
+        float(np.percentile(data[..., channel][mask], black_point_percentile))
+        for channel in range(3)
+    ], dtype=np.float32)
+    shifted = data - black_point.reshape(1, 1, 3)
+    clipped_low = int(np.count_nonzero(shifted < 0))
+    shifted = np.clip(shifted, 0, None)
+    white_point = np.array([
+        float(np.percentile(shifted[..., channel], white_point_percentile))
+        for channel in range(3)
+    ], dtype=np.float32)
+    scale = float(np.max(white_point))
+    if scale <= 0:
+        scale = float(np.percentile(shifted, white_point_percentile))
+    scale = max(scale, 1e-6)
+    normalized = shifted / scale
+    strength = max(0.1, float(stretch_strength))
+    stretched = np.arcsinh(strength * normalized) / np.arcsinh(strength)
+
+    sky_median = np.array([float(np.median(stretched[..., channel][mask])) for channel in range(3)], dtype=np.float32)
+    current_background = float(np.median(sky_median))
+    target = min(0.2, max(0.0, float(target_background_level)))
+    if current_background > 1e-6:
+        stretched *= target / current_background
+    clipped_high = int(np.count_nonzero(stretched > 1.0))
+    stretched = np.clip(stretched, 0, 1)
+    sky_median_after = np.array([float(np.median(stretched[..., channel][mask])) for channel in range(3)], dtype=np.float32)
+    before_luminance = np.median(data, axis=2)[mask]
+    after_luminance = np.median(stretched, axis=2)[mask]
+    hist_before, hist_before_edges = np.histogram(before_luminance, bins=64)
+    hist_after, hist_after_edges = np.histogram(after_luminance, bins=64, range=(0.0, 1.0))
+    stats = {
+        "sky_median_before_stretch": sky_median_before.tolist(),
+        "sky_median_after_stretch": sky_median_after.tolist(),
+        "target_background_level": target,
+        "black_point": black_point.tolist(),
+        "white_point": white_point.tolist(),
+        "clipped_low_percent": float(clipped_low * 100.0 / max(1, shifted.size)),
+        "clipped_high_percent": float(clipped_high * 100.0 / max(1, stretched.size)),
+        "stretch_strength": strength,
+        "black_point_percentile": float(black_point_percentile),
+        "white_point_percentile": float(white_point_percentile),
+        "histogram_before_stretch": {
+            "counts": hist_before.astype(int).tolist(),
+            "bin_edges": hist_before_edges.astype(float).tolist(),
+        },
+        "histogram_after_stretch": {
+            "counts": hist_after.astype(int).tolist(),
+            "bin_edges": hist_after_edges.astype(float).tolist(),
+        },
+    }
+    return np.uint8(np.clip(stretched, 0, 1) * 255), stats
 
 
+def stretch_rgb(rgb: np.ndarray, method: str = "final", stretch: float = 5, q: float = 8) -> tuple[np.ndarray, dict[str, object]]:
+    return final_stretch_rgb(rgb, target_background_level=0.04, stretch_strength=max(0.1, float(q)))
 def create_available_channel_rgb(stacked: dict[str, np.ndarray], stretch: float, q_value: float) -> np.ndarray:
     linear_rgb = compose_linear_rgb(stacked)
-    stretched, _stats = stretch_rgb(linear_rgb, stretch=stretch, q=q_value)
+    stretched, _stats = final_stretch_rgb(linear_rgb, stretch_strength=q_value)
     return stretched
 def run_reduction(
     paths: ProjectPaths,
@@ -574,7 +751,7 @@ def run_reduction(
     background_polynomial_order: int = 2,
     background_sigma_clip: bool = True,
     background_sigma_clip_sigma: float = 3.0,
-    background_correction_strength: float = 0.9,
+    background_correction_strength: float = 1.0,
 ) -> ReductionResult:
     paths.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -653,12 +830,23 @@ def run_reduction(
     sky_masks = []
     if background_correction != BACKGROUND_OFF:
         report(88, "Removing band background gradients")
+        mask_rgb = compose_linear_rgb(stacked)
+        mask_luminance = np.median(mask_rgb, axis=2)
+        object_geometry = auto_object_mask_geometry(mask_luminance)
+        object_mask = build_elliptical_object_mask(
+            mask_luminance.shape,
+            object_geometry["center"],
+            object_geometry["axes"],
+            float(object_geometry.get("angle", 0.0)),
+        )
+        background_stats["object_mask"] = object_geometry
         corrected_stacked = {}
         band_stats = {}
         for band, image in stacked.items():
             result = remove_band_background(
                 image,
                 method=background_correction,
+                object_mask=object_mask,
                 grid_size=background_grid_size,
                 smoothing_sigma=background_smoothing_sigma,
                 polynomial_order=background_polynomial_order,
@@ -679,8 +867,17 @@ def run_reduction(
         sky_mask = np.logical_and.reduce(sky_masks)
         linear_rgb, neutralization_stats = neutralize_rgb_background(linear_rgb, sky_mask, strength=1.0)
         background_stats["rgb_neutralization"] = neutralization_stats
-    rgb, stretch_stats = stretch_rgb(linear_rgb, stretch=stretch, q=q_value)
+    if sky_masks:
+        stretch_mask = np.logical_and.reduce(sky_masks)
+    else:
+        stretch_mask = np.ones(linear_rgb.shape[:2], dtype=bool)
+    rgb, stretch_stats = final_stretch_rgb(linear_rgb, sky_mask=stretch_mask, stretch_strength=q_value)
     background_stats["stretch"] = stretch_stats
+    if "bands" in background_stats:
+        background_stats["gradient_metrics"] = {
+            band: stats.get("gradient_metrics", {})
+            for band, stats in background_stats["bands"].items()
+        }
     report(96, "Preparing output image")
 
     output_file = paths.output_dir / f"{object_name}_reduced.png"

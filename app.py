@@ -9,7 +9,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font, messagebox, ttk
 
-from PIL import Image, ImageOps, ImageTk
+from PIL import Image, ImageDraw, ImageOps, ImageTk
 
 from reduction_tool.calibration import read_fits_data
 from reduction_tool.io import find_fits_files, group_by_filter
@@ -23,14 +23,15 @@ from reduction_tool.processing import (
     BACKGROUND_MEDIAN_GRID,
     BACKGROUND_OFF,
     BACKGROUND_POLYNOMIAL,
+    auto_object_mask_geometry,
     build_elliptical_object_mask,
     compose_linear_rgb,
     create_available_channel_rgb,
+    final_stretch_rgb,
     neutralize_rgb_background,
     normalise_preview,
     remove_band_background,
     run_reduction,
-    stretch_rgb,
 )
 
 DARK_BG = "#0b1020"
@@ -566,6 +567,7 @@ class ManualAlignmentWindow(tk.Toplevel):
         self.cleanup()
         self.destroy()
 
+
     def cleanup(self) -> None:
         for sequence in ("<Left>", "<Right>", "<Up>", "<Down>", "<Shift-Left>", "<Shift-Right>", "<Shift-Up>", "<Shift-Down>", "<space>"):
             self.unbind_all(sequence)
@@ -598,12 +600,12 @@ class BackgroundCorrectionWindow(tk.Toplevel):
         center_x, center_y, axis_a, axis_b, angle = self.default_object_geometry()
         self.preview_mode = tk.StringVar(value="Final stretched")
         self.method_label = tk.StringVar(value="Hybrid")
-        self.correction_strength = tk.DoubleVar(value=0.9)
+        self.correction_strength = tk.DoubleVar(value=1.0)
         self.grid_size = tk.IntVar(value=128)
         self.smoothing_sigma = tk.DoubleVar(value=5.0)
         self.polynomial_order = tk.IntVar(value=2)
-        self.star_sigma_threshold = tk.DoubleVar(value=3.0)
-        self.star_mask_dilation_px = tk.IntVar(value=3)
+        self.star_sigma_threshold = tk.DoubleVar(value=5.0)
+        self.star_mask_dilation_px = tk.IntVar(value=2)
         self.sigma_clip_enabled = tk.BooleanVar(value=True)
         self.sigma_clip_sigma = tk.DoubleVar(value=3.0)
         self.protect_object = tk.BooleanVar(value=True)
@@ -663,12 +665,10 @@ class BackgroundCorrectionWindow(tk.Toplevel):
     def default_object_geometry(self) -> tuple[float, float, float, float, float]:
         linear_rgb = compose_linear_rgb(self.source_stacked)
         luminance = np.median(linear_rgb, axis=2)
-        height, width = luminance.shape
-        try:
-            y, x = np.unravel_index(int(np.nanargmax(luminance)), luminance.shape)
-        except ValueError:
-            x, y = width / 2, height / 2
-        return float(x), float(y), width * 0.22, height * 0.16, 0.0
+        geometry = auto_object_mask_geometry(luminance)
+        center_x, center_y = geometry["center"]
+        axis_a, axis_b = geometry["axes"]
+        return float(center_x), float(center_y), float(axis_a), float(axis_b), float(geometry.get("angle", 0.0))
 
     def _build_layout(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -735,7 +735,7 @@ class BackgroundCorrectionWindow(tk.Toplevel):
         ttk.Label(frame, text="Method").grid(row=0, column=0, sticky="w")
         ttk.Combobox(frame, state="readonly", values=tuple(self.method_values.keys()), textvariable=self.method_label, width=16).grid(row=0, column=1, sticky="w", padx=(6, 14))
         for col, (label, var, start, end, step) in enumerate((
-            ("Strength", self.correction_strength, 0.0, 1.0, 0.05),
+            ("Strength", self.correction_strength, 0.0, 1.2, 0.05),
             ("Grid", self.grid_size, 32, 512, 16),
             ("Smooth", self.smoothing_sigma, 0.0, 30.0, 0.5),
             ("Order", self.polynomial_order, 0, 4, 1),
@@ -778,12 +778,20 @@ class BackgroundCorrectionWindow(tk.Toplevel):
         fallback = next(iter(self.source_stacked.values()))
         if self.auto_object_mask.get():
             center_x, center_y, axis_a, axis_b, angle = self.default_object_geometry()
+            source = "auto_central_region"
         else:
             center_x = float(self.object_center_x.get())
             center_y = float(self.object_center_y.get())
             axis_a = float(self.object_axis_a.get())
             axis_b = float(self.object_axis_b.get())
             angle = float(self.object_angle.get())
+            source = "manual"
+        self.current_object_geometry = {
+            "center": [center_x, center_y],
+            "axes": [axis_a, axis_b],
+            "angle": angle,
+            "source": source,
+        }
         return build_elliptical_object_mask(fallback.shape, (center_x, center_y), (axis_a, axis_b), angle)
 
     def process_preview(self) -> dict[str, object]:
@@ -823,8 +831,8 @@ class BackgroundCorrectionWindow(tk.Toplevel):
         else:
             rgb_after = rgb_before
             neutral_stats = {"background_median_before": [0, 0, 0], "background_median_after": [0, 0, 0], "strength": 0.0}
-        final_stretched, stretch_stats = stretch_rgb(rgb_after, stretch=5, q=8)
-        original_stretched, _ = stretch_rgb(rgb_original, stretch=5, q=8)
+        final_stretched, stretch_stats = final_stretch_rgb(rgb_after, sky_mask=sky_mask, stretch_strength=8)
+        original_stretched, _ = final_stretch_rgb(rgb_original, sky_mask=sky_mask, stretch_strength=8)
         return {
             "corrected_stacked": corrected,
             "background_models": background_models,
@@ -835,7 +843,13 @@ class BackgroundCorrectionWindow(tk.Toplevel):
             "rgb_after_neutralization": rgb_after,
             "final_stretched": final_stretched,
             "original_stretched": original_stretched,
-            "stats": {"bands": band_stats, "rgb_neutralization": neutral_stats, "stretch": stretch_stats},
+            "stats": {
+                "bands": band_stats,
+                "rgb_neutralization": neutral_stats,
+                "stretch": stretch_stats,
+                "gradient_metrics": {band: stats.get("gradient_metrics", {}) for band, stats in band_stats.items()},
+                "object_mask": getattr(self, "current_object_geometry", {}),
+            },
         }
 
     def render_preview(self) -> None:
@@ -865,10 +879,13 @@ class BackgroundCorrectionWindow(tk.Toplevel):
             after = stats["after"]
             p_before = before["percentiles"]
             p_after = after["percentiles"]
+            gradient = stats.get("gradient_metrics", {})
             lines.append(
                 f"{band}: sky {stats['sky_pixels_used_percent']:.1f}% | "
                 f"median {before['median']:.4g}->{after['median']:.4g} | "
                 f"std {before['std']:.4g}->{after['std']:.4g} | "
+                f"edge-center {float(gradient.get('edge_center_delta_before', 0.0)):.4g}->{float(gradient.get('edge_center_delta_after', 0.0)):.4g} "
+                f"({float(gradient.get('gradient_reduction_percent', 0.0)):.1f}%) | "
                 f"p1/50/99 {p_before[0]:.3g}/{p_before[1]:.3g}/{p_before[2]:.3g} -> {p_after[0]:.3g}/{p_after[1]:.3g}/{p_after[2]:.3g}"
             )
         neutral = self.last_result["stats"].get("rgb_neutralization", {})
@@ -880,7 +897,12 @@ class BackgroundCorrectionWindow(tk.Toplevel):
             lines.append(f"RGB ratios before: B/R={before_rgb[2] / before_rgb[0]:.3g}; B/G={before_rgb[2] / before_rgb[1]:.3g}")
         if after_rgb[0] and after_rgb[1]:
             lines.append(f"RGB ratios after: B/R={after_rgb[2] / after_rgb[0]:.3g}; B/G={after_rgb[2] / after_rgb[1]:.3g}")
-        lines.append(f"Stretch clipped pixels: {self.last_result['stats']['stretch']['clipped_pixels_percent']:.3f}%")
+        stretch = self.last_result["stats"].get("stretch", {})
+        sky_after = stretch.get("sky_median_after_stretch", [0, 0, 0])
+        lines.append(
+            f"Final stretch sky median R/G/B: {sky_after[0]:.3f} / {sky_after[1]:.3f} / {sky_after[2]:.3f}; "
+            f"clip low/high: {float(stretch.get('clipped_low_percent', 0.0)):.3f}% / {float(stretch.get('clipped_high_percent', 0.0)):.3f}%"
+        )
         self.stats_text.set("\n".join(lines))
 
     def preview_array(self) -> np.ndarray:
@@ -1039,6 +1061,7 @@ class BackgroundCorrectionWindow(tk.Toplevel):
         Image.fromarray(np.uint8(normalise_preview(self.last_result["rgb_before_neutralization"]) * 255)).save(output_dir / "rgb_before_neutralization.png")
         Image.fromarray(np.uint8(normalise_preview(self.last_result["rgb_after_neutralization"]) * 255)).save(output_dir / "rgb_after_neutralization.png")
         Image.fromarray(np.asarray(self.last_result["final_stretched"], dtype=np.uint8)).save(output_dir / "final_stretched.png")
+        self.save_stretch_histogram(output_dir / "stretch_histogram_before_after.png")
         before, after = self.before_after_same_stretch(self.last_result["rgb_original"], self.last_result["rgb_after_neutralization"])
         before_after = np.concatenate((before, np.ones((before.shape[0], 4, 3), dtype=np.float32), after), axis=1)
         Image.fromarray(np.uint8(before_after * 255)).save(output_dir / "before_after_same_stretch.png")
@@ -1046,6 +1069,38 @@ class BackgroundCorrectionWindow(tk.Toplevel):
         with open(output_dir / "processing_stats.json", "w", encoding="utf-8") as file:
             json.dump(self.last_result["stats"], file, indent=2)
         self.status.set(f"Debug images saved to: {output_dir}")
+
+    def save_stretch_histogram(self, path: Path) -> None:
+        stretch = (self.last_result or {}).get("stats", {}).get("stretch", {})
+        before = stretch.get("histogram_before_stretch", {})
+        after = stretch.get("histogram_after_stretch", {})
+        before_counts = np.asarray(before.get("counts", []), dtype=float)
+        after_counts = np.asarray(after.get("counts", []), dtype=float)
+        width, height = 900, 360
+        margin = 48
+        image = Image.new("RGB", (width, height), PANEL_BG)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((margin, margin, width - margin, height - margin), outline=BORDER)
+        draw.text((margin, 18), "Stretch histogram: before (blue) / after (accent)", fill=TEXT)
+        max_count = max(float(before_counts.max()) if before_counts.size else 0.0, float(after_counts.max()) if after_counts.size else 0.0, 1.0)
+        plot_width = width - margin * 2
+        plot_height = height - margin * 2
+
+        def draw_histogram(counts: np.ndarray, color: str) -> None:
+            if counts.size == 0:
+                return
+            step = plot_width / counts.size
+            points = []
+            for index, count in enumerate(counts):
+                x = margin + index * step
+                y = height - margin - (count / max_count) * plot_height
+                points.append((x, y))
+            if len(points) > 1:
+                draw.line(points, fill=color, width=2)
+
+        draw_histogram(before_counts, "#4f8cff")
+        draw_histogram(after_counts, "#5eead4")
+        image.save(path)
 
     def cleanup(self) -> None:
         self.unbind_all("<space>")
