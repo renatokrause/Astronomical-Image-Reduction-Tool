@@ -137,6 +137,9 @@ class FrameReviewStep(QWidget):
             return "OBJECT"
         return kind.upper()
 
+    def display_band(self, band: str) -> str:
+        return "None" if band == "-" else band
+
     def load_from_scan_result(self):
         result = getattr(self.wizard, "scan_result", None)
 
@@ -210,7 +213,7 @@ class FrameReviewStep(QWidget):
 
         bands = sorted({item.band for item in self.all_files})
         for band in bands:
-            self.band_filter.addItem(band, band)
+            self.band_filter.addItem(self.display_band(band), band)
 
         kind_index = self.kind_filter.findText(current_kind)
         if kind_index >= 0:
@@ -258,7 +261,7 @@ class FrameReviewStep(QWidget):
             values = [
                 use_item,
                 self.display_kind(item.kind),
-                item.band,
+                self.display_band(item.band),
                 Path(item.path).name,
                 exposure,
                 size,
@@ -343,9 +346,9 @@ class FrameReviewStep(QWidget):
 
             if item.kind == "object":
                 if selected:
-                    project.selected_object_files.setdefault(item.band, []).append(item.path)
+                    project.selected_object_files.setdefault(self.display_band(item.band), []).append(item.path)
                 else:
-                    project.rejected_object_files.setdefault(item.band, []).append(item.path)
+                    project.rejected_object_files.setdefault(self.display_band(item.band), []).append(item.path)
             else:
                 key = f"{item.kind}:{item.band}"
                 if selected:
@@ -384,3 +387,4 @@ class FrameReviewStep(QWidget):
         self.wizard.footer.set_status("Frame selection saved.")
         self.wizard.go_to_step(4)
         return False
+

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from airt.project import ReductionProject, load_project, save_project
+from airt.project.recent import add_recent_project, default_projects_dir
 from airt.qt.widgets.step_sidebar import StepSidebar
 from airt.qt.widgets.footer_bar import FooterBar
 from airt.qt.wizard.welcome_step import WelcomeStep
@@ -37,6 +38,7 @@ class WizardWindow(QMainWindow):
         super().__init__()
 
         self.project: ReductionProject | None = None
+        self.scan_result = None
 
         self.setWindowTitle("Astronomical Image Reduction Tool")
         self.resize(1500, 960)
@@ -99,6 +101,7 @@ class WizardWindow(QMainWindow):
     def _build_header(self) -> QWidget:
         header = QWidget()
         header.setObjectName("header")
+
         layout = QHBoxLayout(header)
         layout.setContentsMargins(24, 18, 24, 18)
         layout.setSpacing(16)
@@ -120,6 +123,7 @@ class WizardWindow(QMainWindow):
 
         title = QLabel("Astronomical Image Reduction Tool")
         title.setObjectName("appTitle")
+
         subtitle = QLabel("Calibrate · Align · Stack · Color · Export")
         subtitle.setObjectName("appSubtitle")
 
@@ -153,29 +157,48 @@ class WizardWindow(QMainWindow):
 
     def start_new_project(self) -> None:
         self.project = ReductionProject()
+        self.scan_result = None
         self.update_project_label()
         self.go_to_step(1)
 
     def open_project_dialog(self) -> None:
+        start_dir = default_projects_dir()
+
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open AIRT project",
-            "",
+            str(start_dir),
             "AIRT Project (*.airt.json);;JSON Files (*.json);;All Files (*)",
         )
 
         if not path:
             return
 
+        self.open_project_path(path)
+
+    def open_project_path(self, path: str) -> None:
         try:
             self.project = load_project(path)
         except Exception as exc:
             QMessageBox.critical(self, "Could not open project", str(exc))
             return
 
+        self.scan_result = None
+        self.mark_project_recent()
         self.update_project_label()
         self.footer.set_status(f"Project loaded: {path}")
         self.go_to_step(1)
+
+    def mark_project_recent(self) -> None:
+        if not self.project or not self.project.project_file:
+            return
+
+        display_name = self.project.object_name or Path(self.project.project_file).stem
+        add_recent_project(self.project.project_file, display_name)
+
+        welcome = self.steps[0]
+        if hasattr(welcome, "refresh_recent_projects"):
+            welcome.refresh_recent_projects()
 
     def update_project_label(self) -> None:
         if not self.project:
@@ -198,7 +221,7 @@ class WizardWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Project path not defined",
-                "Go to the Folders step and define the project root and object name first.",
+                "Go to the Folders step and define the object folder and object name first.",
             )
             return
 
@@ -208,6 +231,7 @@ class WizardWindow(QMainWindow):
             QMessageBox.critical(self, "Could not save project", str(exc))
             return
 
+        self.mark_project_recent()
         self.update_project_label()
         self.footer.set_status(f"Project saved: {self.project.project_file}")
 
@@ -227,11 +251,10 @@ class WizardWindow(QMainWindow):
 
     def go_next(self) -> None:
         step = self.steps[self.stack.currentIndex()]
+
         if hasattr(step, "on_next"):
             handled = step.on_next()
             if handled is False:
                 return
 
         self.go_to_step(self.stack.currentIndex() + 1)
-
-

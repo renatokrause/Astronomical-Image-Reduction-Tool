@@ -12,8 +12,11 @@ from PySide6.QtWidgets import (
     QFrame,
     QSizePolicy,
     QScrollArea,
+    QListWidget,
+    QListWidgetItem,
 )
 
+from airt.project.recent import load_recent_projects
 from airt.qt.widgets.action_card import ActionCard
 
 
@@ -24,6 +27,7 @@ def resource_root() -> Path:
 class HeroBanner(QFrame):
     def __init__(self, image_path: Path, parent=None):
         super().__init__(parent)
+
         self.setObjectName("heroBanner")
         self.setMinimumHeight(250)
         self.setMaximumHeight(280)
@@ -33,7 +37,7 @@ class HeroBanner(QFrame):
         layout.setContentsMargins(42, 34, 42, 34)
         layout.setSpacing(8)
 
-        title = QLabel("Welcome to <span style='color:#61a8ff;'>AIRT</span>")
+        title = QLabel("Welcome to AIRT")
         title.setObjectName("heroBannerTitle")
         title.setTextFormat(Qt.RichText)
 
@@ -68,7 +72,6 @@ class HeroBanner(QFrame):
                 Qt.KeepAspectRatioByExpanding,
                 Qt.SmoothTransformation,
             )
-
             x = max(0, (scaled.width() - self.width()) // 2)
             y = max(0, (scaled.height() - self.height()) // 2)
             cropped = scaled.copy(x, y, self.width(), self.height())
@@ -89,6 +92,7 @@ class HeroBanner(QFrame):
 class WelcomeStep(QWidget):
     def __init__(self, wizard):
         super().__init__()
+
         self.wizard = wizard
 
         resources = resource_root()
@@ -141,6 +145,7 @@ class WelcomeStep(QWidget):
 
         cards.addWidget(self.new_card, 1)
         cards.addWidget(self.open_card, 1)
+
         root.addLayout(cards)
 
         recent_title = QLabel("Recent projects")
@@ -148,21 +153,26 @@ class WelcomeStep(QWidget):
         recent_title.setMinimumHeight(34)
         root.addWidget(recent_title)
 
-        recent = QFrame()
-        recent.setObjectName("emptyCard")
-        recent.setMinimumHeight(108)
-        recent.setMaximumHeight(130)
+        self.recent_card = QFrame()
+        self.recent_card.setObjectName("emptyCard")
+        self.recent_card.setMinimumHeight(150)
 
-        recent_layout = QVBoxLayout(recent)
-        recent_layout.setContentsMargins(24, 20, 24, 20)
+        recent_layout = QVBoxLayout(self.recent_card)
+        recent_layout.setContentsMargins(18, 14, 18, 14)
 
-        no_recent = QLabel("No recent projects\nYour recently opened projects will appear here.")
-        no_recent.setObjectName("mutedText")
-        no_recent.setAlignment(Qt.AlignCenter)
-        no_recent.setWordWrap(True)
-        recent_layout.addWidget(no_recent)
+        self.no_recent_label = QLabel("No recent projects\nYour recently opened projects will appear here.")
+        self.no_recent_label.setObjectName("mutedText")
+        self.no_recent_label.setAlignment(Qt.AlignCenter)
+        self.no_recent_label.setWordWrap(True)
 
-        root.addWidget(recent)
+        self.recent_list = QListWidget()
+        self.recent_list.setVisible(False)
+        self.recent_list.itemDoubleClicked.connect(self.open_recent_project)
+
+        recent_layout.addWidget(self.no_recent_label)
+        recent_layout.addWidget(self.recent_list)
+
+        root.addWidget(self.recent_card)
 
         info = QFrame()
         info.setObjectName("infoCard")
@@ -201,7 +211,31 @@ class WelcomeStep(QWidget):
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
+    def refresh_recent_projects(self):
+        projects = load_recent_projects()
+
+        self.recent_list.clear()
+
+        if not projects:
+            self.recent_list.setVisible(False)
+            self.no_recent_label.setVisible(True)
+            return
+
+        self.no_recent_label.setVisible(False)
+        self.recent_list.setVisible(True)
+
+        for project in projects:
+            item = QListWidgetItem(f"{project['name']}\n{project['path']}")
+            item.setData(Qt.UserRole, project["path"])
+            self.recent_list.addItem(item)
+
+    def open_recent_project(self, item: QListWidgetItem):
+        path = item.data(Qt.UserRole)
+        if path:
+            self.wizard.open_project_path(path)
+
     def on_enter(self):
+        self.refresh_recent_projects()
         self.wizard.footer.back_button.setEnabled(False)
         self.wizard.footer.next_button.setEnabled(True)
         self.wizard.footer.set_status("Ready · No project loaded")

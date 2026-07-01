@@ -47,6 +47,7 @@ class FitsPreviewDialog(QDialog):
 
         self.setWindowTitle("FITS preview")
         self.resize(1200, 780)
+        self.setWindowState(self.windowState() | Qt.WindowMaximized)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 14, 14, 14)
@@ -197,3 +198,4 @@ class FitsPreviewDialog(QDialog):
 
     def zoom_100(self):
         self.view.resetTransform()
+

@@ -302,8 +302,11 @@ class FolderSelectionStep(QWidget):
             return False
 
         autosave_project(self.wizard.project)
+        if hasattr(self.wizard, "mark_project_recent"):
+            self.wizard.mark_project_recent()
         self.wizard.update_project_label()
         self.wizard.footer.set_status(f"Project saved: {self.wizard.project.project_file}")
         self.wizard.go_to_step(2)
         return False
+
 
