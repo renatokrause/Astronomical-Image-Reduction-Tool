@@ -5,13 +5,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
     QGridLayout,
     QLabel,
-    QPushButton,
     QFrame,
     QScrollArea,
     QProgressBar,
@@ -19,6 +18,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
 )
 
+from airt.project import autosave_project
 from airt.core.final_render import (
     build_final_image,
     save_final_outputs,
@@ -30,8 +30,11 @@ from airt.core.final_render import (
 class ProcessingStep(QWidget):
     def __init__(self, wizard):
         super().__init__()
+
         self.wizard = wizard
         self.generated_files: list[Path] = []
+        self.processing = False
+        self.finished = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -52,7 +55,7 @@ class ProcessingStep(QWidget):
         title.setObjectName("pageTitle")
 
         subtitle = QLabel(
-            "Generate the final image files using the selected frames and saved project settings."
+            "Final files are generated automatically using the selected frames and saved project settings."
         )
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
@@ -111,15 +114,16 @@ class ProcessingStep(QWidget):
         progress_title = QLabel("Processing")
         progress_title.setObjectName("sectionTitle")
 
-        self.status_label = QLabel("Ready.")
+        self.status_label = QLabel("Processing will start automatically.")
         self.status_label.setObjectName("mutedText")
+        self.status_label.setWordWrap(True)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
 
         self.generated_list = QListWidget()
-        self.generated_list.setMinimumHeight(180)
+        self.generated_list.setMinimumHeight(220)
 
         progress_layout.addWidget(progress_title)
         progress_layout.addWidget(self.status_label)
@@ -127,38 +131,28 @@ class ProcessingStep(QWidget):
         progress_layout.addWidget(self.generated_list)
 
         root.addWidget(progress_card)
-
-        actions_card = QFrame()
-        actions_card.setObjectName("contentCard")
-        actions_layout = QHBoxLayout(actions_card)
-        actions_layout.setContentsMargins(18, 14, 18, 14)
-        actions_layout.setSpacing(10)
-
-        actions_title = QLabel("Actions")
-        actions_title.setObjectName("sectionTitle")
-
-        self.start_button = QPushButton("Start processing")
-        self.start_button.clicked.connect(self.start_processing)
-
-        self.open_folder_button = QPushButton("Open output folder")
-        self.open_folder_button.clicked.connect(self.open_output_folder)
-        self.open_folder_button.setEnabled(False)
-
-        actions_layout.addWidget(actions_title)
-        actions_layout.addStretch(1)
-        actions_layout.addWidget(self.start_button)
-        actions_layout.addWidget(self.open_folder_button)
-
-        root.addWidget(actions_card)
         root.addStretch(1)
 
         outer.addWidget(scroll)
 
     def on_enter(self):
-        self.wizard.footer.back_button.setEnabled(True)
+        self.finished = False
+        self.generated_files = []
+        self.generated_list.clear()
+        self.progress_bar.setValue(0)
+
+        self.wizard.footer.back_button.setEnabled(False)
+        self.wizard.footer.next_button.setText("Finish")
         self.wizard.footer.next_button.setEnabled(False)
-        self.wizard.footer.set_status("Ready to process final outputs.")
+        self.wizard.footer.set_status("Processing final outputs.")
+
         self.refresh_summary()
+
+        QTimer.singleShot(250, self.start_processing)
+
+    def on_leave(self, target_index: int):
+        if target_index != self.wizard.stack.currentIndex():
+            self.wizard.footer.next_button.setText("Next")
 
     def refresh_summary(self):
         project = self.wizard.project
@@ -186,52 +180,67 @@ class ProcessingStep(QWidget):
         self.bands_label.setText(", ".join(bands) if bands else "None")
 
     def start_processing(self):
+        if self.processing:
+            return
+
         project = self.wizard.project
 
         if not project:
+            self.fail_processing("No project is loaded.")
             return
 
         export = project.output_options.get("final_export", {}) or {}
         formats = export.get("formats", {}) or {}
 
         if not any(formats.values()):
-            self.status_label.setText("No output format selected.")
+            self.fail_processing("No output format selected.")
             return
 
-        self.generated_list.clear()
+        self.processing = True
+        self.finished = False
         self.generated_files = []
-        self.start_button.setEnabled(False)
-        self.open_folder_button.setEnabled(False)
+        self.generated_list.clear()
 
         try:
             self.progress_bar.setValue(10)
             self.status_label.setText("Rendering final image...")
+            self.wizard.footer.set_status("Rendering final image.")
 
             result = build_final_image(project)
 
-            self.progress_bar.setValue(65)
+            self.progress_bar.setValue(70)
             self.status_label.setText("Saving output files...")
+            self.wizard.footer.set_status("Saving output files.")
 
             self.generated_files = save_final_outputs(project, result, export)
 
             self.progress_bar.setValue(100)
-            self.status_label.setText("Done.")
+            self.status_label.setText("Done. Final files were generated.")
 
             for path in self.generated_files:
                 self.generated_list.addItem(QListWidgetItem(str(path)))
 
-            self.open_folder_button.setEnabled(True)
-            self.wizard.footer.set_status("Final files generated.")
+            self.finished = True
+            self.wizard.footer.next_button.setEnabled(True)
+            self.wizard.footer.back_button.setEnabled(True)
+            self.wizard.footer.set_status("Processing finished. Click Finish to close.")
 
             if export.get("open_output_folder", False):
                 self.open_output_folder()
 
         except Exception as exc:
-            self.status_label.setText(f"Processing failed: {exc}")
-            self.progress_bar.setValue(0)
-            self.wizard.footer.set_status(f"Processing failed: {exc}")
+            self.fail_processing(str(exc))
         finally:
-            self.start_button.setEnabled(True)
+            self.processing = False
+
+    def fail_processing(self, message: str):
+        self.progress_bar.setValue(0)
+        self.status_label.setText(f"Processing failed: {message}")
+        self.finished = False
+
+        self.wizard.footer.back_button.setEnabled(True)
+        self.wizard.footer.next_button.setEnabled(False)
+        self.wizard.footer.set_status(f"Processing failed: {message}")
 
     def open_output_folder(self):
         project = self.wizard.project
@@ -242,9 +251,27 @@ class ProcessingStep(QWidget):
         folder = output_folder_for_project(project)
         folder.mkdir(parents=True, exist_ok=True)
 
-        if sys.platform.startswith("win"):
-            os.startfile(str(folder))
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(folder)])
-        else:
-            subprocess.Popen(["xdg-open", str(folder)])
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(folder))
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(folder)])
+            else:
+                subprocess.Popen(["xdg-open", str(folder)])
+        except Exception:
+            pass
+
+    def on_next(self) -> bool:
+        if not self.finished:
+            return False
+
+        project = self.wizard.project
+
+        if project and project.project_file:
+            try:
+                autosave_project(project)
+            except Exception:
+                pass
+
+        self.wizard.close()
+        return False
