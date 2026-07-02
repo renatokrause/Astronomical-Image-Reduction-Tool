@@ -529,12 +529,33 @@ class BackgroundStep(QWidget):
 
             item = direct or normalized_match or {}
 
+            channel = item.get("channel", "")
+            if not channel:
+                channel = self.default_channel_for_band(band)
+
             result[band] = {
                 "hex_color": item.get("hex_color", "#808080"),
-                "channel": item.get("channel", "-"),
+                "channel": channel,
             }
 
         return result
+
+    def default_channel_for_band(self, band: str) -> str:
+        normalized = normalize_band_name(band)
+
+        if normalized == "L":
+            return "L"
+
+        if normalized in {"B", "HB", "OIII"}:
+            return "B"
+
+        if normalized in {"G", "V"}:
+            return "G"
+
+        if normalized in {"R", "HA", "SII", "I"}:
+            return "R"
+
+        return "-"
 
     def channel_to_rgb_weight(self, channel: str, hex_color: str) -> tuple[float, float, float]:
         channel = (channel or "-").upper().strip()
@@ -565,6 +586,27 @@ class BackgroundStep(QWidget):
 
         return self.hex_to_rgb(hex_color)
 
+    def normalize_channel(self, channel: np.ndarray) -> np.ndarray:
+        finite = np.isfinite(channel)
+
+        if not np.any(finite):
+            return np.zeros_like(channel, dtype=np.float32)
+
+        valid = channel[finite]
+        high = np.percentile(valid, 99.5)
+
+        if high <= 0:
+            high = float(np.max(valid))
+
+        if high <= 0:
+            return np.zeros_like(channel, dtype=np.float32)
+
+        normalized = channel / high
+        normalized = np.clip(normalized, 0, 1)
+        normalized[~finite] = 0
+
+        return normalized.astype(np.float32, copy=False)
+
     def hex_to_rgb(self, hex_color: str) -> tuple[float, float, float]:
         value = (hex_color or "#808080").strip().lstrip("#")
 
@@ -588,7 +630,7 @@ class BackgroundStep(QWidget):
 
         height, width = next(iter(shapes))
         rgb = np.zeros((height, width, 3), dtype=np.float32)
-        chroma_count = 0
+        active_channels = np.zeros(3, dtype=np.float32)
 
         luminance = None
 
@@ -607,8 +649,7 @@ class BackgroundStep(QWidget):
 
             item = mapping.get(band, {})
             hex_color = item.get("hex_color", "#808080")
-            channel = item.get("channel", "-")
-
+            channel = item.get("channel", self.default_channel_for_band(band))
             normalized_band = normalize_band_name(band)
 
             if channel == "L" or normalized_band == "L":
@@ -620,27 +661,26 @@ class BackgroundStep(QWidget):
             if color == (0.0, 0.0, 0.0):
                 continue
 
-            rgb[:, :, 0] += shifted * color[0]
-            rgb[:, :, 1] += shifted * color[1]
-            rgb[:, :, 2] += shifted * color[2]
-            chroma_count += 1
+            for channel_index, weight in enumerate(color):
+                if weight > 0:
+                    rgb[:, :, channel_index] += shifted * weight
+                    active_channels[channel_index] += weight
 
-        if chroma_count == 0:
+        if np.all(active_channels == 0):
             if luminance is None:
                 return None
 
-            gray = np.clip(luminance, 0, 1)
+            gray = self.normalize_channel(luminance)
             return np.dstack([gray, gray, gray]).astype(np.float32, copy=False)
 
-        max_value = float(np.nanmax(rgb)) if np.any(np.isfinite(rgb)) else 0.0
-
-        if max_value > 0:
-            rgb = rgb / max_value
+        for channel_index in range(3):
+            if active_channels[channel_index] > 0:
+                rgb[:, :, channel_index] = self.normalize_channel(rgb[:, :, channel_index])
 
         rgb = np.clip(rgb, 0, 1)
 
         if luminance is not None:
-            luminance = np.clip(luminance, 0, 1)
+            luma = self.normalize_channel(luminance)
 
             max_channel = np.max(rgb, axis=2, keepdims=True)
             hue = np.divide(
@@ -650,8 +690,8 @@ class BackgroundStep(QWidget):
                 where=max_channel > 1e-6,
             )
 
-            grayscale_l = np.dstack([luminance, luminance, luminance])
-            rgb = np.where(max_channel > 1e-6, hue * luminance[:, :, None], grayscale_l)
+            colorized_luma = hue * luma[:, :, None]
+            rgb = np.where(max_channel > 1e-6, colorized_luma, np.dstack([luma, luma, luma]))
 
         return np.clip(rgb, 0, 1)
 

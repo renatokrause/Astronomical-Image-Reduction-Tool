@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -157,6 +157,11 @@ class FilesStep(QWidget):
         self.wizard.footer.set_status("Scan FITS files and validate detected bands.")
 
         if self.wizard.project:
+            if hasattr(self.wizard, "hide_wait_overlay"):
+
+                self.wizard.hide_wait_overlay()
+
+
             self.run_scan()
 
     def _progress(self, value: int, total: int, message: str) -> None:

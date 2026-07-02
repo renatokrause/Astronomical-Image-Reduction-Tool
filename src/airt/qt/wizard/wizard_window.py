@@ -201,7 +201,10 @@ class WizardWindow(QMainWindow):
 
     def hide_wait_overlay(self):
         self.wait_overlay.hide()
-        QApplication.restoreOverrideCursor()
+
+        if QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+
         QApplication.processEvents()
 
     def ensure_project(self) -> ReductionProject:
