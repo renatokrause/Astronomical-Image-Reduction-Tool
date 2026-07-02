@@ -74,11 +74,6 @@ class ProcessingStep(QWidget):
         self.status_label.setObjectName("mutedText")
         self.status_label.setWordWrap(True)
 
-        self.detail_label = QLabel("")
-        self.detail_label.setObjectName("infoText")
-        self.detail_label.setWordWrap(True)
-        self.detail_label.setMinimumHeight(120)
-
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
@@ -86,7 +81,6 @@ class ProcessingStep(QWidget):
         progress_layout.addWidget(section_title)
         progress_layout.addWidget(self.status_label)
         progress_layout.addWidget(self.progress_bar)
-        progress_layout.addWidget(self.detail_label)
 
         root.addWidget(progress_card)
         root.addStretch(1)
@@ -98,7 +92,6 @@ class ProcessingStep(QWidget):
         self.generated_files = []
         self.progress_bar.setValue(0)
         self.status_label.setText("Processing will start automatically.")
-        self.detail_label.setText("Preparing final processing.")
 
         self.wizard.footer.back_button.setEnabled(False)
 
@@ -184,7 +177,6 @@ class ProcessingStep(QWidget):
     def fail_processing(self, message: str):
         self.progress_bar.setValue(0)
         self.status_label.setText(f"Processing failed: {message}")
-        self.detail_label.setText(message)
         self.finished = False
 
         self.wizard.footer.back_button.setEnabled(True)

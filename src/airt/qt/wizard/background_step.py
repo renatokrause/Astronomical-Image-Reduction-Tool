@@ -99,6 +99,7 @@ class BackgroundStep(QWidget):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("Conservative", "conservative")
         self.mode_combo.addItem("Standard", "standard")
+        self.mode_combo.addItem("Aggressive", "aggressive")
         self.mode_combo.addItem("Custom", "custom")
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
 
@@ -385,6 +386,9 @@ class BackgroundStep(QWidget):
         if mode == "standard":
             return 0.60
 
+        if mode == "aggressive":
+            return 0.85
+
         return 0.35
 
     def default_scale(self, mode: str) -> int:
@@ -393,6 +397,9 @@ class BackgroundStep(QWidget):
 
         if mode == "standard":
             return 112
+
+        if mode == "aggressive":
+            return 80
 
         return 128
 
@@ -652,6 +659,8 @@ class BackgroundStep(QWidget):
         self.fit_preview()
 
     def gray_to_qimage(self, image: np.ndarray) -> QImage:
+        # Match the visual orientation used by final PNG/TIFF/JPEG exports.
+        image = np.flipud(image)
         image8 = (np.clip(image, 0, 1) * 255).astype(np.uint8)
         image8 = np.ascontiguousarray(image8)
 

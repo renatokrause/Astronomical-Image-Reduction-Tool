@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
@@ -11,14 +11,14 @@ class StepSidebar(QWidget):
 
         self.steps = [
             "Welcome",
-            "Folders",
-            "Files",
-            "Frames",
-            "Preset",
+            "Project Folders",
+            "File Scan",
+            "Frame Selection",
+            "Preset & Color Mapping",
             "Alignment",
-            "Background",
-            "Export",
-            "Done",
+            "Background Correction",
+            "Final Composition & Export",
+            "Process & Save",
         ]
         self.labels: list[QLabel] = []
 
