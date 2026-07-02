@@ -235,26 +235,26 @@ def apply_dark_theme(widget: QWidget) -> None:
         }
 
         #actionCardPrimary {
-            background-color: #10233d;
-            border: 1px solid #3e90ff;
-            border-radius: 14px;
-        }
+    background-color: #0f192b;
+    border: 1px solid #2a3d5e;
+    border-radius: 14px;
+}
 
-        #actionCardPrimary:hover {
-            background-color: #132b4c;
-            border: 1px solid #62a8ff;
-        }
+#actionCardPrimary:hover {
+    background-color: #14233a;
+    border: 1px solid #3e90ff;
+}
 
-        #actionCard {
-            background-color: #0f192b;
-            border: 1px solid #2a3d5e;
-            border-radius: 14px;
-        }
+#actionCard {
+    background-color: #0f192b;
+    border: 1px solid #2a3d5e;
+    border-radius: 14px;
+}
 
-        #actionCard:hover {
-            background-color: #14233a;
-            border: 1px solid #3e90ff;
-        }
+#actionCard:hover {
+    background-color: #14233a;
+    border: 1px solid #3e90ff;
+}
 
                         #actionCardIcon {
             background-color: transparent;
@@ -288,21 +288,3 @@ def apply_dark_theme(widget: QWidget) -> None:
         }
         '''
     )
-
-
-
-
-
-
-
-QFrame#actionCard {
-    background-color: #101B2D;
-    border: 1px solid #294466;
-    border-radius: 18px;
-}
-
-
-QFrame#actionCard:hover {
-    background-color: #173153;
-    border: 1px solid #58A0FF;
-}
