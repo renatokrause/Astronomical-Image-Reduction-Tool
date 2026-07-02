@@ -1,1 +1,3 @@
-﻿from airt.qt.wizard.wizard_window import WizardWindow
+from airt.qt.wizard.wizard_window import WizardWindow as WizardWindow
+
+__all__ = ["WizardWindow"]

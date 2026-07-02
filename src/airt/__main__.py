@@ -1,4 +1,4 @@
-﻿from airt.app import main
+from airt.app import main
 
 if __name__ == "__main__":
     main()

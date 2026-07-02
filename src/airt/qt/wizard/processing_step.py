@@ -3,25 +3,26 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
-    QWidget,
-    QVBoxLayout,
-    QLabel,
     QFrame,
-    QScrollArea,
+    QLabel,
     QProgressBar,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
 
-from airt.project import autosave_project
 from airt.core.final_render import (
     build_final_image,
-    save_final_outputs,
     output_folder_for_project,
+    save_final_outputs,
 )
+from airt.project import autosave_project
 
 
 class ProcessingStep(QWidget):
@@ -201,10 +202,8 @@ class ProcessingStep(QWidget):
         project = self.wizard.project
 
         if project and project.project_file:
-            try:
+            with suppress(Exception):
                 autosave_project(project)
-            except Exception:
-                pass
 
         self.wizard.close()
         return False

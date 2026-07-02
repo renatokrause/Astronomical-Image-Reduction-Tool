@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -10,7 +10,9 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 class ActionCard(QFrame):
     clicked = Signal()
 
-    def __init__(self, title: str, description: str, icon_path: str | Path | None = None, primary: bool = False, parent=None):
+    def __init__(
+        self, title: str, description: str, icon_path: str | Path | None = None, primary: bool = False, parent=None
+    ):
         super().__init__(parent)
         self.setFocusPolicy(Qt.NoFocus)
 
@@ -30,9 +32,7 @@ class ActionCard(QFrame):
         if icon_path:
             pixmap = QPixmap(str(icon_path))
             if not pixmap.isNull():
-                icon_box.setPixmap(
-                    pixmap.scaled(86, 86, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                )
+                icon_box.setPixmap(pixmap.scaled(86, 86, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
         text_layout = QVBoxLayout()
         text_layout.setSpacing(8)

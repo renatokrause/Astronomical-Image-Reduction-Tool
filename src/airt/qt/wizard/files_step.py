@@ -1,22 +1,20 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QApplication,
+    QFrame,
     QHBoxLayout,
     QLabel,
-    QPushButton,
-    QFrame,
-    QScrollArea,
+    QMessageBox,
     QProgressBar,
+    QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
-    QApplication,
-    QMessageBox,
+    QVBoxLayout,
+    QWidget,
 )
 
 from airt.core.file_scan import scan_project_files
@@ -158,9 +156,7 @@ class FilesStep(QWidget):
 
         if self.wizard.project:
             if hasattr(self.wizard, "hide_wait_overlay"):
-
                 self.wizard.hide_wait_overlay()
-
 
             self.run_scan()
 
@@ -232,11 +228,7 @@ class FilesStep(QWidget):
         self.summary_table.resizeColumnsToContents()
 
         bands = sorted(
-            {
-                item.band
-                for item in result.files
-                if item.kind in {"object", "flat", "focus"} and item.band != "-"
-            }
+            {item.band for item in result.files if item.kind in {"object", "flat", "focus"} and item.band != "-"}
         )
 
         if bands:
@@ -267,6 +259,3 @@ class FilesStep(QWidget):
 
         self.wizard.go_to_step(3)
         return False
-
-
-

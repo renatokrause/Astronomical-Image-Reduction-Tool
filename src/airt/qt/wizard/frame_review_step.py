@@ -4,22 +4,22 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QComboBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
-    QFrame,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
-    QComboBox,
-    QMessageBox,
+    QVBoxLayout,
+    QWidget,
 )
 
-from airt.qt.widgets.fits_preview_dialog import FitsPreviewDialog
-from airt.project import autosave_project
 from airt.core.bands import band_display_label, sort_bands_recommended
+from airt.project import autosave_project
+from airt.qt.widgets.fits_preview_dialog import FitsPreviewDialog
 
 
 class FrameReviewStep(QWidget):
@@ -95,16 +95,18 @@ class FrameReviewStep(QWidget):
         table_layout.setContentsMargins(22, 18, 22, 22)
 
         self.table = QTableWidget(0, 8)
-        self.table.setHorizontalHeaderLabels([
-            "Use",
-            "Type",
-            "Band",
-            "File",
-            "Exposure",
-            "Size",
-            "Binning",
-            "Status",
-        ])
+        self.table.setHorizontalHeaderLabels(
+            [
+                "Use",
+                "Type",
+                "Band",
+                "File",
+                "Exposure",
+                "Size",
+                "Binning",
+                "Status",
+            ]
+        )
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -345,11 +347,7 @@ class FrameReviewStep(QWidget):
     def preview_selected_visible(self):
         self.sync_displayed_selection()
 
-        selected_visible = [
-            item
-            for item in self.displayed_files
-            if self.selection_state.get(item.path, False)
-        ]
+        selected_visible = [item for item in self.displayed_files if self.selection_state.get(item.path, False)]
 
         if not selected_visible:
             QMessageBox.information(
@@ -436,8 +434,7 @@ class FrameReviewStep(QWidget):
                 )
 
         self.summary_label.setText(
-            f"Total files: {total}. Selected: {selected}. Rejected: {rejected}. "
-            + " | ".join(parts)
+            f"Total files: {total}. Selected: {selected}. Rejected: {rejected}. " + " | ".join(parts)
         )
 
     def on_next(self) -> bool:
@@ -445,6 +442,3 @@ class FrameReviewStep(QWidget):
         self.wizard.footer.set_status("Frame selection saved.")
         self.wizard.go_to_step(4)
         return False
-
-
-

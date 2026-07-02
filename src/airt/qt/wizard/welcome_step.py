@@ -2,19 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QRectF, QSize
-from PySide6.QtGui import QPixmap, QPainter, QColor, QPen, QPainterPath
+from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QAbstractItemView,
+    QFrame,
     QHBoxLayout,
     QLabel,
-    QFrame,
-    QSizePolicy,
-    QScrollArea,
     QListWidget,
     QListWidgetItem,
-    QAbstractItemView,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
 
 from airt.project.recent import load_recent_projects

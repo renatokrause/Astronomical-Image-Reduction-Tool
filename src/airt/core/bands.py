@@ -1,8 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
-from typing import Iterable
-
+from collections.abc import Iterable
 
 BAND_ALIASES = {
     "l": "L",
@@ -10,34 +9,26 @@ BAND_ALIASES = {
     "luminance": "L",
     "clear": "L",
     "c": "L",
-
     "u": "U",
-
     "b": "B",
     "blue": "B",
-
     "g": "G",
     "green": "G",
-
     "v": "V",
-
     "r": "R",
     "red": "R",
-
     "ha": "HA",
     "h-alpha": "HA",
     "halpha": "HA",
     "h_alpha": "HA",
     "h α": "HA",
     "hα": "HA",
-
     "hb": "HB",
     "h-beta": "HB",
     "hbeta": "HB",
     "h_beta": "HB",
     "h β": "HB",
     "hβ": "HB",
-
     "oiii": "OIII",
     "o iii": "OIII",
     "o-iii": "OIII",
@@ -45,7 +36,6 @@ BAND_ALIASES = {
     "[oiii]": "OIII",
     "[o iii]": "OIII",
     "oxygen iii": "OIII",
-
     "sii": "SII",
     "s ii": "SII",
     "s-ii": "SII",
@@ -54,7 +44,6 @@ BAND_ALIASES = {
     "[s ii]": "SII",
     "sulfur ii": "SII",
     "sulphur ii": "SII",
-
     "i": "I",
     "ir": "I",
     "infrared": "I",

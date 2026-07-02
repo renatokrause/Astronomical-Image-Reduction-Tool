@@ -1,6 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -48,7 +48,7 @@ class ReductionProject:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ReductionProject":
+    def from_dict(cls, data: dict[str, Any]) -> ReductionProject:
         known_fields = {field.name for field in cls.__dataclass_fields__.values()}
         filtered = {key: value for key, value in data.items() if key in known_fields}
         return cls(**filtered)
@@ -78,4 +78,3 @@ def apply_standard_folder_structure(project: ReductionProject) -> None:
     project.focus_folder = str(root / "calibration" / "focus")
 
     project.update_timestamp()
-

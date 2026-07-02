@@ -1,25 +1,25 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
-import numpy as np
 
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
-    QVBoxLayout,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
     QHBoxLayout,
+    QLabel,
     QListWidget,
     QListWidgetItem,
-    QLabel,
-    QPushButton,
-    QGraphicsView,
-    QGraphicsScene,
-    QGraphicsPixmapItem,
     QMessageBox,
+    QPushButton,
     QSplitter,
+    QVBoxLayout,
     QWidget,
-    QAbstractItemView,
 )
 
 
@@ -143,19 +143,12 @@ class FitsPreviewDialog(QDialog):
         self.info_label.setText("No files selected.")
 
     def selected_paths(self) -> set[str]:
-        return {
-            item.data(Qt.UserRole)
-            for item in self.file_list.selectedItems()
-        }
+        return {item.data(Qt.UserRole) for item in self.file_list.selectedItems()}
 
     def selected_file_infos(self):
         selected_paths = self.selected_paths()
 
-        return [
-            info
-            for info in self.files
-            if info.path in selected_paths
-        ]
+        return [info for info in self.files if info.path in selected_paths]
 
     def load_selected_files(self):
         selected = self.selected_file_infos()
@@ -194,8 +187,7 @@ class FitsPreviewDialog(QDialog):
             band = info.band if info.band != "-" else "None"
 
             self.info_label.setText(
-                f"{path.name} | Type: {info.kind.upper()} | Band: {band} "
-                f"| Exposure: {exposure} | Size: {size_text}"
+                f"{path.name} | Type: {info.kind.upper()} | Band: {band} | Exposure: {exposure} | Size: {size_text}"
             )
         else:
             kinds = sorted({info.kind.upper() for info in selected})
@@ -228,10 +220,7 @@ class FitsPreviewDialog(QDialog):
         if not arrays:
             raise ValueError("No files selected.")
 
-        if len(arrays) == 1:
-            combined = arrays[0]
-        else:
-            combined = np.nanmedian(np.stack(arrays, axis=0), axis=0)
+        combined = arrays[0] if len(arrays) == 1 else np.nanmedian(np.stack(arrays, axis=0), axis=0)
 
         return self.array_to_qimage(combined)
 

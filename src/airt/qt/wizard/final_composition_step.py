@@ -3,26 +3,26 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QGridLayout,
-    QLabel,
-    QPushButton,
-    QFrame,
-    QScrollArea,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
-    QSpinBox,
-    QCheckBox,
-    QLineEdit,
-    QGraphicsView,
-    QGraphicsScene,
+    QFrame,
     QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
 )
 
+from airt.core.final_render import build_final_image, object_name_for_project, output_folder_for_project, rgb_to_qimage
 from airt.project import autosave_project
-from airt.core.final_render import build_final_image, rgb_to_qimage, output_folder_for_project, object_name_for_project
 
 
 class CompositionPreviewView(QGraphicsView):
@@ -62,9 +62,7 @@ class FinalCompositionStep(QWidget):
         title = QLabel("Final Composition & Export")
         title.setObjectName("pageTitle")
 
-        subtitle = QLabel(
-            "Choose final rendering parameters and output formats. Files are generated on the next step."
-        )
+        subtitle = QLabel("Choose final rendering parameters and output formats. Files are generated on the next step.")
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
 

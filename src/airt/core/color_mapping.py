@@ -1,9 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
-from airt.core.bands import normalize_band_name, sort_bands_recommended, band_display_label
+from airt.core.bands import band_display_label, normalize_band_name, sort_bands_recommended
 
 
 @dataclass(frozen=True)

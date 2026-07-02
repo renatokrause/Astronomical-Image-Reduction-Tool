@@ -3,16 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QFileDialog,
+    QFrame,
     QGridLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
-    QFileDialog,
     QMessageBox,
-    QFrame,
+    QPushButton,
     QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
 
 
@@ -226,10 +226,14 @@ class FolderSelectionStep(QWidget):
         project.object_folder = str(object_folder) if object_folder_text else ""
         project.object_name = object_name
         project.project_root = str(object_folder.parent) if object_folder_text else ""
-        project.project_file = str(object_folder / f"{object_name}.airt.json") if object_folder_text and object_name else ""
+        project.project_file = (
+            str(object_folder / f"{object_name}.airt.json") if object_folder_text and object_name else ""
+        )
 
         lights_folder = object_folder / "lights"
-        project.lights_folder = str(lights_folder if lights_folder.exists() else object_folder) if object_folder_text else ""
+        project.lights_folder = (
+            str(lights_folder if lights_folder.exists() else object_folder) if object_folder_text else ""
+        )
         project.output_folder = str(object_folder / "output") if object_folder_text else ""
 
         project.bias_folder = self.fields["bias_folder"].text().strip()
@@ -308,5 +312,3 @@ class FolderSelectionStep(QWidget):
         self.wizard.footer.set_status(f"Project saved: {self.wizard.project.project_file}")
         self.wizard.go_to_step(2)
         return False
-
-

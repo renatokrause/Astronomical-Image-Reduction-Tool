@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -32,10 +32,7 @@ def load_project(path: str | Path) -> ReductionProject:
     project_path = Path(path)
     data = json.loads(project_path.read_text(encoding="utf-8"))
 
-    if "project" in data:
-        project = ReductionProject.from_dict(data["project"])
-    else:
-        project = ReductionProject.from_dict(data)
+    project = ReductionProject.from_dict(data["project"]) if "project" in data else ReductionProject.from_dict(data)
 
     project.project_file = str(project_path)
     project.dirty = False

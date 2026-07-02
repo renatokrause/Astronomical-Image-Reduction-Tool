@@ -1,4 +1,4 @@
-﻿[build-system]
+[build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
@@ -30,3 +30,80 @@ airt = [
     "resources/images/*",
     "resources/styles/*",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [
+  ".git",
+  ".venv",
+  "venv",
+  "build",
+  "dist",
+  ".pytest_cache",
+  "__pycache__",
+  "legacy",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "F",
+  "W",
+  "I",
+  "UP",
+  "B",
+  "SIM",
+]
+ignore = [
+  "E501",
+  "B008",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-q --cov=airt --cov-report=term-missing --cov-report=xml"
+pythonpath = ["src"]
+qt_api = "pyside6"
+
+[tool.coverage.run]
+branch = true
+source = ["src/airt"]
+omit = [
+  "*/__main__.py",
+  "*/legacy/*",
+  "*/tests/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 0
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "venv", "build", "dist", "legacy"]
+skips = ["B101"]
+
+[tool.pyright]
+include = ["src/airt", "tests"]
+exclude = [".venv", "venv", "build", "dist", "legacy"]
+venvPath = "."
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+reportPrivateImportUsage = false
+
+[tool.radon]
+exclude = ".venv,venv,build,dist,legacy"
+cc_min = "B"
+mi_min = "B"
+

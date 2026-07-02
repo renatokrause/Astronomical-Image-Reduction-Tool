@@ -3,28 +3,27 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QGridLayout,
-    QLabel,
+    QColorDialog,
     QComboBox,
     QFrame,
+    QGridLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
-    QPushButton,
-    QColorDialog,
-    QLineEdit,
+    QVBoxLayout,
+    QWidget,
 )
 
-from airt.project import autosave_project
 from airt.core.color_mapping import (
     BandColorMapping,
     build_color_mapping,
     is_valid_hex_color,
     mapping_to_project_dict,
 )
-
+from airt.project import autosave_project
 
 PRESETS = {
     "auto": "Auto",
@@ -142,13 +141,15 @@ class PresetStep(QWidget):
         mapping_title.setObjectName("sectionTitle")
 
         self.mapping_table = QTableWidget(0, 5)
-        self.mapping_table.setHorizontalHeaderLabels([
-            "Detected band",
-            "Normalized band",
-            "Color",
-            "Hex",
-            "Channel",
-        ])
+        self.mapping_table.setHorizontalHeaderLabels(
+            [
+                "Detected band",
+                "Normalized band",
+                "Color",
+                "Hex",
+                "Channel",
+            ]
+        )
         self.mapping_table.verticalHeader().setVisible(False)
         self.mapping_table.setMinimumHeight(360)
         self.mapping_table.horizontalHeader().setStretchLastSection(True)
@@ -192,13 +193,7 @@ class PresetStep(QWidget):
         if not result:
             return []
 
-        return sorted(
-            {
-                item.band
-                for item in result.files
-                if item.kind == "object" and item.band != "-"
-            }
-        )
+        return sorted({item.band for item in result.files if item.kind == "object" and item.band != "-"})
 
     def load_from_project(self):
         project = self.wizard.project
@@ -311,7 +306,9 @@ class PresetStep(QWidget):
         if not self.current_mapping:
             self.info_text.setText("No object bands were detected. Go back to Files and verify the scan result.")
         elif custom:
-            self.info_text.setText("Custom mode uses a Smart Default as a starting point. You can edit each color and channel.")
+            self.info_text.setText(
+                "Custom mode uses a Smart Default as a starting point. You can edit each color and channel."
+            )
         else:
             self.info_text.setText("Preset mode is read-only. Switch to Custom to manually edit colors and channels.")
 
@@ -325,7 +322,7 @@ class PresetStep(QWidget):
         except Exception:
             return "#FFFFFF"
 
-        luminance = (0.299 * r + 0.587 * g + 0.114 * b)
+        luminance = 0.299 * r + 0.587 * g + 0.114 * b
         return "#000000" if luminance > 150 else "#FFFFFF"
 
     def choose_color(self, row: int):
@@ -474,4 +471,3 @@ class PresetStep(QWidget):
         self.persist_settings()
         self.wizard.go_to_step(5)
         return False
-

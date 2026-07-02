@@ -5,33 +5,32 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
+    QApplication,
+    QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
-    QStackedWidget,
-    QFileDialog,
+    QMainWindow,
     QMessageBox,
-    QApplication,
-    QFrame,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from airt.project import ReductionProject, load_project, save_project
 from airt.project.recent import add_recent_project, default_projects_dir
-from airt.qt.widgets.step_sidebar import StepSidebar
+from airt.qt.theme import apply_dark_theme
 from airt.qt.widgets.footer_bar import FooterBar
-from airt.qt.wizard.welcome_step import WelcomeStep
-from airt.qt.wizard.folders_step import FolderSelectionStep
-from airt.qt.wizard.placeholder_step import PlaceholderStep
-from airt.qt.wizard.files_step import FilesStep
-from airt.qt.wizard.frame_review_step import FrameReviewStep
-from airt.qt.wizard.preset_step import PresetStep
+from airt.qt.widgets.step_sidebar import StepSidebar
 from airt.qt.wizard.alignment_step import AlignmentStep
 from airt.qt.wizard.background_step import BackgroundStep
+from airt.qt.wizard.files_step import FilesStep
 from airt.qt.wizard.final_composition_step import FinalCompositionStep
+from airt.qt.wizard.folders_step import FolderSelectionStep
+from airt.qt.wizard.frame_review_step import FrameReviewStep
+from airt.qt.wizard.preset_step import PresetStep
 from airt.qt.wizard.processing_step import ProcessingStep
-from airt.qt.theme import apply_dark_theme
+from airt.qt.wizard.welcome_step import WelcomeStep
 
 
 def icons_dir() -> Path:
@@ -122,9 +121,7 @@ class WizardWindow(QMainWindow):
         header_icon_path = icons_dir() / "header_andromeda.png"
         if header_icon_path.exists():
             pixmap = QPixmap(str(header_icon_path))
-            icon_label.setPixmap(
-                pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            )
+            icon_label.setPixmap(pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
         title_box = QVBoxLayout()
         title_box.setSpacing(4)
@@ -332,4 +329,3 @@ class WizardWindow(QMainWindow):
                 return
 
         self.go_to_step(self.stack.currentIndex() + 1)
-

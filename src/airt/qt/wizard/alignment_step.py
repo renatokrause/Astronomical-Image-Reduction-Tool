@@ -1,31 +1,31 @@
 from __future__ import annotations
 
 from pathlib import Path
-import numpy as np
 
+import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QGridLayout,
-    QLabel,
-    QPushButton,
-    QFrame,
-    QScrollArea,
     QComboBox,
     QDoubleSpinBox,
-    QMessageBox,
-    QGraphicsView,
-    QGraphicsScene,
+    QFrame,
     QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
+from airt.core.bands import band_display_label, normalize_band_name, sort_bands_recommended
 from airt.project import autosave_project
-from airt.core.bands import band_display_label, sort_bands_recommended, normalize_band_name
 
 
 class AlignmentPreviewView(QGraphicsView):
@@ -136,7 +136,6 @@ class AlignmentStep(QWidget):
         self.y_spin.setSingleStep(0.5)
         self.y_spin.valueChanged.connect(self.on_offset_spin_changed)
 
-
         control_grid.addWidget(control_title, 0, 0, 1, 6)
 
         control_grid.addWidget(QLabel("Reference band"), 1, 0)
@@ -144,7 +143,6 @@ class AlignmentStep(QWidget):
 
         control_grid.addWidget(QLabel("Band to adjust"), 1, 2)
         control_grid.addWidget(self.adjust_band_combo, 1, 3)
-
 
         control_grid.addWidget(QLabel("X offset"), 2, 0)
         control_grid.addWidget(self.x_spin, 2, 1)
@@ -706,6 +704,8 @@ class AlignmentStep(QWidget):
         return np.clip(rgb, 0, 1)
 
     def rgb_to_qimage(self, rgb: np.ndarray) -> QImage:
+        # Match the visual orientation used by background preview and final exports.
+        rgb = np.flipud(rgb)
         image8 = (np.clip(rgb, 0, 1) * 255).astype(np.uint8)
         image8 = np.ascontiguousarray(image8)
 
@@ -730,9 +730,7 @@ class AlignmentStep(QWidget):
         if rgb is None:
             self.preview_scene.clear()
             self.current_pixmap_item = None
-            self.preview_info.setText(
-                "No compatible selected object bands are available for alignment preview."
-            )
+            self.preview_info.setText("No compatible selected object bands are available for alignment preview.")
             return
 
         qimage = self.rgb_to_qimage(rgb)

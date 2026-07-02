@@ -1,11 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from pathlib import Path
 import ctypes
 import json
 import os
 import sys
-
+from pathlib import Path
 
 MAX_RECENT_PROJECTS = 5
 
@@ -132,10 +131,7 @@ def add_recent_project(project_path: str, name: str | None = None) -> None:
 
     existing = load_recent_projects()
 
-    filtered = [
-        item for item in existing
-        if str(Path(item["path"]).expanduser().resolve()) != resolved
-    ]
+    filtered = [item for item in existing if str(Path(item["path"]).expanduser().resolve()) != resolved]
 
     filtered.insert(
         0,

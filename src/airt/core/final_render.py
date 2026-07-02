@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
-import numpy as np
 
+import numpy as np
 from PySide6.QtGui import QImage
 
 from airt.core.bands import normalize_band_name, sort_bands_recommended
@@ -36,11 +36,7 @@ def selected_calibration_files(project) -> dict[str, list[str]]:
     selected = getattr(project, "selected_calibration_files", None)
 
     if isinstance(selected, dict):
-        return {
-            str(key): list(paths)
-            for key, paths in selected.items()
-            if paths
-        }
+        return {str(key): list(paths) for key, paths in selected.items() if paths}
 
     return {}
 
@@ -125,8 +121,6 @@ def calibration_paths_for_kind(calibration: dict[str, list[str]], kind: str, ban
 
     for key, paths in calibration.items():
         key_text = str(key).upper()
-        key_norm = normalize_band_name(key)
-
         matches_kind = kind in key_text or key_text == kind
 
         if kind == "FLAT" and not matches_kind:
@@ -478,10 +472,7 @@ def asinh_stretch(unit: np.ndarray, stretch: str) -> np.ndarray:
 
     unit = np.clip(unit, 0, 1)
 
-    if factor > 1.0:
-        out = np.arcsinh(unit * factor) / np.arcsinh(factor)
-    else:
-        out = unit
+    out = np.arcsinh(unit * factor) / np.arcsinh(factor) if factor > 1.0 else unit
 
     if gamma != 1.0:
         out = np.power(np.clip(out, 0, 1), gamma)
@@ -741,11 +732,7 @@ def stretch_rgb_preserve_color(
         luma_linear = np.nan_to_num(luminance_master, nan=0.0).astype(np.float32, copy=False)
         luma_linear = np.maximum(luma_linear, 0)
     else:
-        luma_linear = (
-            0.2126 * rgb[:, :, 0]
-            + 0.7152 * rgb[:, :, 1]
-            + 0.0722 * rgb[:, :, 2]
-        )
+        luma_linear = 0.2126 * rgb[:, :, 0] + 0.7152 * rgb[:, :, 1] + 0.0722 * rgb[:, :, 2]
 
     luma_stretched = final_stretch_channel(luma_linear, stretch)
 
@@ -895,9 +882,8 @@ def save_final_outputs(project, result: FinalRenderResult, export_settings: dict
     if formats.get("tiff", True):
         path = output_dir / f"{base_name}.tif"
 
-        if not qimage.save(str(path), "TIFF"):
-            if not qimage.save(str(path), "TIF"):
-                raise RuntimeError(f"Could not save {path}")
+        if not qimage.save(str(path), "TIFF") and not qimage.save(str(path), "TIF"):
+            raise RuntimeError(f"Could not save {path}")
 
         generated.append(path)
 

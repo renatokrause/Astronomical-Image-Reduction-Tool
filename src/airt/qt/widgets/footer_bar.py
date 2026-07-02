@@ -1,7 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QFrame
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 
 class FooterBar(QWidget):

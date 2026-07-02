@@ -1,30 +1,30 @@
 from __future__ import annotations
 
 from pathlib import Path
-import numpy as np
 
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QGridLayout,
-    QLabel,
-    QPushButton,
-    QFrame,
-    QScrollArea,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
-    QSpinBox,
-    QCheckBox,
-    QGraphicsView,
-    QGraphicsScene,
+    QFrame,
     QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
 )
 
-from airt.project import autosave_project
 from airt.core.bands import sort_bands_recommended
+from airt.project import autosave_project
 
 
 class BackgroundPreviewView(QGraphicsView):

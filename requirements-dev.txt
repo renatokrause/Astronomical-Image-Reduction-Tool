@@ -1,0 +1,11 @@
+﻿ruff
+pyright
+bandit[toml]
+pip-audit
+pytest
+pytest-cov
+pytest-qt
+vulture
+radon
+pre-commit
+pyinstaller

@@ -1,12 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-import re
-from typing import Iterable
 
-from airt.core.bands import normalize_band_name, sort_bands_recommended, recommended_band_sort_key
-
+from airt.core.bands import normalize_band_name, recommended_band_sort_key, sort_bands_recommended
 
 FITS_EXTENSIONS = (".fit", ".fits", ".fts", ".fit.gz", ".fits.gz", ".fts.gz")
 
@@ -101,9 +100,7 @@ def read_fits_header(path: Path):
     try:
         from astropy.io import fits
     except Exception as exc:
-        raise RuntimeError(
-            "Astropy is required to scan FITS files. Install it with: pip install astropy"
-        ) from exc
+        raise RuntimeError("Astropy is required to scan FITS files. Install it with: pip install astropy") from exc
 
     return fits.getheader(path, 0)
 
@@ -128,10 +125,7 @@ def read_one_file(path: Path, kind: str) -> FitsFileInfo:
 
         fallback_band = infer_band_from_filename(path)
 
-        if kind in {"bias", "dark"}:
-            band = "-"
-        else:
-            band = normalize_band(filter_value, fallback=fallback_band)
+        band = "-" if kind in {"bias", "dark"} else normalize_band(filter_value, fallback=fallback_band)
 
         exptime_value = header_value(header, ["EXPTIME", "EXPOSURE", "EXP_TIME", "ITIME"])
         try:
@@ -145,10 +139,7 @@ def read_one_file(path: Path, kind: str) -> FitsFileInfo:
         xbin = header_value(header, ["XBINNING", "CCDXBIN", "XBIN"])
         ybin = header_value(header, ["YBINNING", "CCDYBIN", "YBIN"])
 
-        if xbin is not None or ybin is not None:
-            binning = f"{xbin or '?'}x{ybin or '?'}"
-        else:
-            binning = "-"
+        binning = f"{xbin or '?'}x{ybin or '?'}" if xbin is not None or ybin is not None else "-"
 
         problem = ""
 
@@ -315,15 +306,8 @@ def scan_project_files(project, progress_callback=None) -> ScanResult:
     if not any(item.kind == "flat" for item in files):
         problems.append("No flat FITS files found")
 
-    file_problems = [
-        f"{Path(item.path).name}: {item.problem}"
-        for item in files
-        if item.problem
-    ]
+    file_problems = [f"{Path(item.path).name}: {item.problem}" for item in files if item.problem]
 
     problems.extend(file_problems)
 
     return ScanResult(files=files, summary=summary, problems=problems)
-
-
-

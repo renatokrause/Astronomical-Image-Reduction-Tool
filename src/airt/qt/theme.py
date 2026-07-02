@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QWidget
 
 def apply_dark_theme(widget: QWidget) -> None:
     widget.setStyleSheet(
-        r'''
+        r"""
         QMainWindow {
             background-color: #0b1220;
             color: #e5eefc;
@@ -286,7 +286,7 @@ def apply_dark_theme(widget: QWidget) -> None:
         #statusText {
             color: #9fb0c8;
         }
-        
+
 
 QFrame#waitOverlay {
     background-color: rgba(5, 10, 20, 145);
@@ -304,5 +304,5 @@ QLabel#waitOverlayText {
     font-weight: 700;
 }
 
-'''
+"""
     )
