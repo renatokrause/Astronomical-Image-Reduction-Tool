@@ -26,6 +26,7 @@ from airt.qt.wizard.files_step import FilesStep
 from airt.qt.wizard.frame_review_step import FrameReviewStep
 from airt.qt.wizard.preset_step import PresetStep
 from airt.qt.wizard.alignment_step import AlignmentStep
+from airt.qt.wizard.background_step import BackgroundStep
 from airt.qt.theme import apply_dark_theme
 
 
@@ -79,7 +80,7 @@ class WizardWindow(QMainWindow):
             FrameReviewStep(self),
             PresetStep(self),
             AlignmentStep(self),
-            PlaceholderStep(self, "Background correction", "Preview and apply gradient removal, neutralization, crop and final adjustments."),
+            BackgroundStep(self),
             PlaceholderStep(self, "Final export", "Review the final image and export PNG/TIFF outputs."),
             PlaceholderStep(self, "Done", "Open output folder or start a new project."),
         ]
