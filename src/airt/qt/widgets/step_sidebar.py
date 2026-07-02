@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 class StepSidebar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setFixedWidth(360)
         self.setObjectName("stepSidebar")
 
         self.steps = [

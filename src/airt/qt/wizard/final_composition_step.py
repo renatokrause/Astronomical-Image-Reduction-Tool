@@ -275,7 +275,7 @@ class FinalCompositionStep(QWidget):
 
         formats = export.get("formats", {})
         self.png_check.setChecked(bool(formats.get("png", True)))
-        self.tiff_check.setChecked(bool(formats.get("tiff", True)))
+        self.tiff_check.setChecked(bool(formats.get("tiff", False)))
         self.fits_check.setChecked(bool(formats.get("fits", False)))
         self.jpeg_check.setChecked(bool(formats.get("jpeg", False)))
         self.jpeg_quality_spin.setValue(int(export.get("jpeg_quality", 95)))
@@ -321,7 +321,7 @@ class FinalCompositionStep(QWidget):
         self.brightness_spin.setValue(0.0)
         self.contrast_spin.setValue(1.0)
         self.png_check.setChecked(True)
-        self.tiff_check.setChecked(True)
+        self.tiff_check.setChecked(False)
         self.fits_check.setChecked(False)
         self.jpeg_check.setChecked(False)
         self.jpeg_quality_spin.setValue(95)

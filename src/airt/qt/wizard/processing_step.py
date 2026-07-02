@@ -113,14 +113,6 @@ class ProcessingStep(QWidget):
     def report_progress(self, value: int, message: str):
         self.progress_bar.setValue(int(value))
         self.status_label.setText(message)
-
-        current = self.detail_label.text().strip()
-        next_text = message if not current else f"{current}\\n{message}"
-
-        # Mantém o texto limitado para não transformar isso em um listbox disfarçado.
-        lines = next_text.splitlines()[-8:]
-        self.detail_label.setText("\\n".join(lines))
-
         QApplication.processEvents()
 
     def start_processing(self):
