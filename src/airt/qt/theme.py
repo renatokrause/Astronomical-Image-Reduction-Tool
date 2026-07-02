@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 
@@ -286,5 +286,23 @@ def apply_dark_theme(widget: QWidget) -> None:
         #statusText {
             color: #9fb0c8;
         }
-        '''
+        
+
+QFrame#waitOverlay {
+    background-color: rgba(5, 10, 20, 145);
+}
+
+QFrame#waitOverlayBox {
+    background-color: #101b2d;
+    border: 1px solid #3e90ff;
+    border-radius: 18px;
+}
+
+QLabel#waitOverlayText {
+    color: #ffffff;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+'''
     )

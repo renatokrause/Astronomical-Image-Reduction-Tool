@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QFileDialog,
     QMessageBox,
+    QApplication,
+    QFrame,
 )
 
 from airt.project import ReductionProject, load_project, save_project
@@ -46,6 +48,7 @@ class WizardWindow(QMainWindow):
         self.setMinimumSize(1200, 800)
 
         root = QWidget()
+        self.root = root
         self.setCentralWidget(root)
 
         main_layout = QVBoxLayout(root)
@@ -72,6 +75,8 @@ class WizardWindow(QMainWindow):
 
         self.footer = FooterBar()
         main_layout.addWidget(self.footer)
+
+        self.wait_overlay = self._build_wait_overlay()
 
         self.steps = [
             WelcomeStep(self),
@@ -150,6 +155,54 @@ class WizardWindow(QMainWindow):
         layout.addLayout(project_box)
 
         return header
+
+    def _build_wait_overlay(self) -> QFrame:
+        overlay = QFrame(self.root)
+        overlay.setObjectName("waitOverlay")
+        overlay.hide()
+
+        layout = QVBoxLayout(overlay)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(Qt.AlignCenter)
+
+        box = QFrame()
+        box.setObjectName("waitOverlayBox")
+        box_layout = QVBoxLayout(box)
+        box_layout.setContentsMargins(34, 24, 34, 24)
+        box_layout.setSpacing(8)
+
+        label = QLabel("Please wait")
+        label.setObjectName("waitOverlayText")
+        label.setAlignment(Qt.AlignCenter)
+
+        detail = QLabel("Loading step...")
+        detail.setObjectName("mutedText")
+        detail.setAlignment(Qt.AlignCenter)
+
+        box_layout.addWidget(label)
+        box_layout.addWidget(detail)
+
+        layout.addWidget(box, 0, Qt.AlignCenter)
+
+        return overlay
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+
+        if hasattr(self, "wait_overlay"):
+            self.wait_overlay.setGeometry(self.root.rect())
+
+    def show_wait_overlay(self):
+        self.wait_overlay.setGeometry(self.root.rect())
+        self.wait_overlay.raise_()
+        self.wait_overlay.show()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+
+    def hide_wait_overlay(self):
+        self.wait_overlay.hide()
+        QApplication.restoreOverrideCursor()
+        QApplication.processEvents()
 
     def ensure_project(self) -> ReductionProject:
         if self.project is None:
@@ -241,18 +294,26 @@ class WizardWindow(QMainWindow):
             return
 
         current_index = self.stack.currentIndex()
+        show_wait = current_index != index and current_index >= 0
 
-        if current_index != index and 0 <= current_index < len(self.steps):
-            current_step = self.steps[current_index]
-            if hasattr(current_step, "on_leave"):
-                current_step.on_leave(index)
+        if show_wait:
+            self.show_wait_overlay()
 
-        self.stack.setCurrentIndex(index)
-        self.sidebar.set_current_step(index)
+        try:
+            if current_index != index and 0 <= current_index < len(self.steps):
+                current_step = self.steps[current_index]
+                if hasattr(current_step, "on_leave"):
+                    current_step.on_leave(index)
 
-        step = self.steps[index]
-        if hasattr(step, "on_enter"):
-            step.on_enter()
+            self.stack.setCurrentIndex(index)
+            self.sidebar.set_current_step(index)
+
+            step = self.steps[index]
+            if hasattr(step, "on_enter"):
+                step.on_enter()
+        finally:
+            if show_wait:
+                self.hide_wait_overlay()
 
     def go_back(self) -> None:
         self.go_to_step(self.stack.currentIndex() - 1)

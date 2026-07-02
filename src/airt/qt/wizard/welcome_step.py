@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -117,11 +117,6 @@ class WelcomeStep(QWidget):
 
         hero = HeroBanner(images / "hero_astro.jpg")
         root.addWidget(hero)
-
-        section = QLabel("Get started")
-        section.setObjectName("sectionTitle")
-        section.setMinimumHeight(34)
-        root.addWidget(section)
 
         cards = QHBoxLayout()
         cards.setSpacing(20)

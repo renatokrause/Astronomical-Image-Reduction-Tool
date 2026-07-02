@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 import numpy as np
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from airt.project import autosave_project
 from airt.core.bands import sort_bands_recommended, normalize_band_name
+from airt.core.color_mapping import build_color_mapping
 
 
 class BackgroundPreviewView(QGraphicsView):
@@ -162,9 +163,6 @@ class BackgroundStep(QWidget):
         actions_title = QLabel("Actions")
         actions_title.setObjectName("sectionTitle")
 
-        self.update_button = QPushButton("Update preview")
-        self.update_button.clicked.connect(self.recompute_preview)
-
         self.reset_button = QPushButton("Reset")
         self.reset_button.clicked.connect(self.reset_settings)
 
@@ -179,7 +177,6 @@ class BackgroundStep(QWidget):
 
         actions_layout.addWidget(actions_title)
         actions_layout.addStretch(1)
-        actions_layout.addWidget(self.update_button)
         actions_layout.addWidget(self.reset_button)
         actions_layout.addSpacing(12)
         actions_layout.addWidget(self.fit_button)
@@ -490,23 +487,44 @@ class BackgroundStep(QWidget):
 
     def color_mapping_for_bands(self) -> dict[str, str]:
         project = self.wizard.project
+        bands = sort_bands_recommended(self.band_arrays.keys())
 
-        if not project:
-            return {}
+        saved_mapping = {}
+        mode = "photometric"
+        custom_mapping = {}
 
-        mapping = project.output_options.get("color_mapping", {}) or {}
+        if project:
+            saved_mapping = project.output_options.get("color_mapping", {}) or {}
+            mode = project.output_options.get("color_mapping_mode", "photometric") or "photometric"
+            custom_mapping = project.output_options.get("custom_color_mapping", {}) or {}
+
+        if not saved_mapping:
+            generated = build_color_mapping(
+                bands=bands,
+                mode=mode,
+                saved_custom=custom_mapping,
+            )
+            saved_mapping = {
+                item.band: {
+                    "hex_color": item.hex_color,
+                    "normalized_band": item.normalized_band,
+                    "channel": item.channel,
+                    "color_name": item.color_name,
+                }
+                for item in generated
+            }
 
         result = {}
 
-        for band in self.band_arrays:
+        for band in bands:
             normalized = normalize_band_name(band)
 
-            direct = mapping.get(band, {})
+            direct = saved_mapping.get(band, {})
             normalized_match = None
 
-            for saved_band, saved_mapping in mapping.items():
+            for saved_band, saved_item in saved_mapping.items():
                 if normalize_band_name(saved_band) == normalized:
-                    normalized_match = saved_mapping
+                    normalized_match = saved_item
                     break
 
             item = direct or normalized_match or {}
