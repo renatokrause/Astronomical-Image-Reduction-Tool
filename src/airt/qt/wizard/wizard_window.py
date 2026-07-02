@@ -29,6 +29,8 @@ from airt.qt.wizard.frame_review_step import FrameReviewStep
 from airt.qt.wizard.preset_step import PresetStep
 from airt.qt.wizard.alignment_step import AlignmentStep
 from airt.qt.wizard.background_step import BackgroundStep
+from airt.qt.wizard.final_composition_step import FinalCompositionStep
+from airt.qt.wizard.processing_step import ProcessingStep
 from airt.qt.theme import apply_dark_theme
 
 
@@ -86,8 +88,8 @@ class WizardWindow(QMainWindow):
             PresetStep(self),
             AlignmentStep(self),
             BackgroundStep(self),
-            PlaceholderStep(self, "Final export", "Review the final image and export PNG/TIFF outputs."),
-            PlaceholderStep(self, "Done", "Open output folder or start a new project."),
+            FinalCompositionStep(self),
+            ProcessingStep(self),
         ]
 
         for step in self.steps:
