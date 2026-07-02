@@ -3,7 +3,7 @@
 from pathlib import Path
 import numpy as np
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
     QWidget,
@@ -29,15 +29,45 @@ from airt.project import autosave_project
 
 
 class AlignmentPreviewView(QGraphicsView):
+    bandDragged = Signal(float, float)
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setDragMode(QGraphicsView.NoDrag)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        self._last_scene_pos = None
 
     def wheelEvent(self, event: QWheelEvent):
         factor = 1.25 if event.angleDelta().y() > 0 else 0.8
         self.scale(factor, factor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._last_scene_pos = self.mapToScene(event.position().toPoint())
+            event.accept()
+            return
+
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._last_scene_pos is not None:
+            current = self.mapToScene(event.position().toPoint())
+            delta = current - self._last_scene_pos
+            self._last_scene_pos = current
+            self.bandDragged.emit(float(delta.x()), float(delta.y()))
+            event.accept()
+            return
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._last_scene_pos = None
+            event.accept()
+            return
+
+        super().mouseReleaseEvent(event)
 
 
 class AlignmentStep(QWidget):
@@ -79,45 +109,27 @@ class AlignmentStep(QWidget):
         root.addWidget(title)
         root.addWidget(subtitle)
 
-        splitter = QSplitter(Qt.Horizontal)
+        main_splitter = QSplitter(Qt.Horizontal)
 
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(18)
-
-        reference_card = QFrame()
-        reference_card.setObjectName("contentCard")
-        reference_layout = QGridLayout(reference_card)
-        reference_layout.setContentsMargins(24, 20, 24, 24)
-        reference_layout.setHorizontalSpacing(14)
-        reference_layout.setVerticalSpacing(14)
-        reference_layout.setColumnMinimumWidth(0, 150)
-        reference_layout.setColumnStretch(1, 1)
-
-        reference_title = QLabel("Reference")
-        reference_title.setObjectName("sectionTitle")
-
-        self.reference_band_combo = QComboBox()
-        self.reference_band_combo.currentIndexChanged.connect(self.on_reference_band_changed)
-
-        reference_layout.addWidget(reference_title, 0, 0, 1, 2)
-        reference_layout.addWidget(QLabel("Reference band"), 1, 0)
-        reference_layout.addWidget(self.reference_band_combo, 1, 1)
-
-        left_layout.addWidget(reference_card)
+        control_panel = QWidget()
+        control_layout = QVBoxLayout(control_panel)
+        control_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.setSpacing(18)
 
         control_card = QFrame()
         control_card.setObjectName("contentCard")
-        control_layout = QGridLayout(control_card)
-        control_layout.setContentsMargins(24, 20, 24, 24)
-        control_layout.setHorizontalSpacing(14)
-        control_layout.setVerticalSpacing(14)
-        control_layout.setColumnMinimumWidth(0, 150)
-        control_layout.setColumnStretch(1, 1)
+        control_grid = QGridLayout(control_card)
+        control_grid.setContentsMargins(24, 20, 24, 24)
+        control_grid.setHorizontalSpacing(14)
+        control_grid.setVerticalSpacing(14)
+        control_grid.setColumnMinimumWidth(0, 150)
+        control_grid.setColumnStretch(1, 1)
 
         control_title = QLabel("Band adjustment")
         control_title.setObjectName("sectionTitle")
+
+        self.reference_band_combo = QComboBox()
+        self.reference_band_combo.currentIndexChanged.connect(self.on_reference_band_changed)
 
         self.adjust_band_combo = QComboBox()
         self.adjust_band_combo.currentIndexChanged.connect(self.on_adjust_band_changed)
@@ -139,41 +151,53 @@ class AlignmentStep(QWidget):
             self.step_combo.addItem(f"{value:g} px", value)
         self.step_combo.setCurrentIndex(2)
 
-        control_layout.addWidget(control_title, 0, 0, 1, 2)
-        control_layout.addWidget(QLabel("Band to adjust"), 1, 0)
-        control_layout.addWidget(self.adjust_band_combo, 1, 1)
-        control_layout.addWidget(QLabel("X offset"), 2, 0)
-        control_layout.addWidget(self.x_spin, 2, 1)
-        control_layout.addWidget(QLabel("Y offset"), 3, 0)
-        control_layout.addWidget(self.y_spin, 3, 1)
-        control_layout.addWidget(QLabel("Step size"), 4, 0)
-        control_layout.addWidget(self.step_combo, 4, 1)
+        control_grid.addWidget(control_title, 0, 0, 1, 2)
+        control_grid.addWidget(QLabel("Reference band"), 1, 0)
+        control_grid.addWidget(self.reference_band_combo, 1, 1)
+        control_grid.addWidget(QLabel("Band to adjust"), 2, 0)
+        control_grid.addWidget(self.adjust_band_combo, 2, 1)
+        control_grid.addWidget(QLabel("X offset"), 3, 0)
+        control_grid.addWidget(self.x_spin, 3, 1)
+        control_grid.addWidget(QLabel("Y offset"), 4, 0)
+        control_grid.addWidget(self.y_spin, 4, 1)
+        control_grid.addWidget(QLabel("Step size"), 5, 0)
+        control_grid.addWidget(self.step_combo, 5, 1)
 
-        movement_layout = QGridLayout()
+        control_panel.setMinimumWidth(340)
+        control_layout.addWidget(control_card)
+        control_layout.addStretch(1)
 
-        self.up_button = QPushButton("Up")
-        self.down_button = QPushButton("Down")
-        self.left_button = QPushButton("Left")
-        self.right_button = QPushButton("Right")
+        preview_panel = QWidget()
+        preview_layout = QVBoxLayout(preview_panel)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.setSpacing(14)
 
-        self.up_button.clicked.connect(lambda: self.move_current_band(0, -self.step_size()))
-        self.down_button.clicked.connect(lambda: self.move_current_band(0, self.step_size()))
-        self.left_button.clicked.connect(lambda: self.move_current_band(-self.step_size(), 0))
-        self.right_button.clicked.connect(lambda: self.move_current_band(self.step_size(), 0))
+        preview_card = QFrame()
+        preview_card.setObjectName("contentCard")
+        preview_card_layout = QVBoxLayout(preview_card)
+        preview_card_layout.setContentsMargins(18, 18, 18, 18)
+        preview_card_layout.setSpacing(10)
 
-        movement_layout.addWidget(self.up_button, 0, 1)
-        movement_layout.addWidget(self.left_button, 1, 0)
-        movement_layout.addWidget(self.right_button, 1, 2)
-        movement_layout.addWidget(self.down_button, 2, 1)
+        self.preview_info = QLabel("Alignment preview will appear here.")
+        self.preview_info.setObjectName("mutedText")
+        self.preview_info.setWordWrap(True)
 
-        control_layout.addLayout(movement_layout, 5, 0, 1, 2)
+        self.preview_scene = QGraphicsScene(self)
+        self.preview_view = AlignmentPreviewView()
+        self.preview_view.setScene(self.preview_scene)
+        self.preview_view.setBackgroundBrush(Qt.black)
+        self.preview_view.setMinimumHeight(620)
+        self.preview_view.bandDragged.connect(self.move_current_band)
 
-        left_layout.addWidget(control_card)
+        preview_card_layout.addWidget(self.preview_info)
+        preview_card_layout.addWidget(self.preview_view, 1)
+
+        preview_layout.addWidget(preview_card, 1)
 
         actions_card = QFrame()
         actions_card.setObjectName("contentCard")
-        actions_layout = QVBoxLayout(actions_card)
-        actions_layout.setContentsMargins(24, 20, 24, 24)
+        actions_layout = QHBoxLayout(actions_card)
+        actions_layout.setContentsMargins(18, 14, 18, 14)
         actions_layout.setSpacing(10)
 
         actions_title = QLabel("Actions")
@@ -198,15 +222,23 @@ class AlignmentStep(QWidget):
         self.zoom_out_button.clicked.connect(lambda: self.preview_view.scale(0.8, 0.8))
 
         actions_layout.addWidget(actions_title)
+        actions_layout.addStretch(1)
         actions_layout.addWidget(self.auto_button)
         actions_layout.addWidget(self.reset_band_button)
         actions_layout.addWidget(self.reset_all_button)
-        actions_layout.addSpacing(8)
+        actions_layout.addSpacing(12)
         actions_layout.addWidget(self.fit_button)
         actions_layout.addWidget(self.zoom_in_button)
         actions_layout.addWidget(self.zoom_out_button)
 
-        left_layout.addWidget(actions_card)
+        preview_layout.addWidget(actions_card)
+
+        main_splitter.addWidget(control_panel)
+        main_splitter.addWidget(preview_panel)
+        main_splitter.setStretchFactor(0, 0)
+        main_splitter.setStretchFactor(1, 1)
+
+        root.addWidget(main_splitter, 1)
 
         summary_card = QFrame()
         summary_card.setObjectName("contentCard")
@@ -222,45 +254,12 @@ class AlignmentStep(QWidget):
         self.summary_table.verticalHeader().setVisible(False)
         self.summary_table.setMinimumHeight(190)
         self.summary_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.summary_table.horizontalHeader().setStretchLastSection(True)
 
         summary_layout.addWidget(summary_title)
         summary_layout.addWidget(self.summary_table)
 
-        left_layout.addWidget(summary_card)
-        left_layout.addStretch(1)
-
-        preview_panel = QWidget()
-        preview_layout = QVBoxLayout(preview_panel)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.setSpacing(10)
-
-        preview_card = QFrame()
-        preview_card.setObjectName("contentCard")
-        preview_card_layout = QVBoxLayout(preview_card)
-        preview_card_layout.setContentsMargins(18, 18, 18, 18)
-        preview_card_layout.setSpacing(10)
-
-        self.preview_info = QLabel("Alignment preview will appear here.")
-        self.preview_info.setObjectName("mutedText")
-        self.preview_info.setWordWrap(True)
-
-        self.preview_scene = QGraphicsScene(self)
-        self.preview_view = AlignmentPreviewView()
-        self.preview_view.setScene(self.preview_scene)
-        self.preview_view.setBackgroundBrush(Qt.black)
-        self.preview_view.setMinimumHeight(620)
-
-        preview_card_layout.addWidget(self.preview_info)
-        preview_card_layout.addWidget(self.preview_view, 1)
-
-        preview_layout.addWidget(preview_card, 1)
-
-        splitter.addWidget(left_panel)
-        splitter.addWidget(preview_panel)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-
-        root.addWidget(splitter, 1)
+        root.addWidget(summary_card)
 
         info = QFrame()
         info.setObjectName("infoCard")
@@ -268,7 +267,7 @@ class AlignmentStep(QWidget):
         info_layout.setContentsMargins(20, 14, 20, 14)
 
         self.info_text = QLabel(
-            "Keyboard shortcuts: arrow keys move the selected band. Reset All leaves all band offsets at zero."
+            "Keyboard shortcuts: arrow keys move the selected band. You can also drag the preview image with the mouse to move the selected band. Reset All leaves all band offsets at zero."
         )
         self.info_text.setObjectName("infoText")
         self.info_text.setWordWrap(True)
@@ -385,7 +384,6 @@ class AlignmentStep(QWidget):
             return np.zeros_like(data, dtype=np.float32)
 
         valid = data[finite]
-
         low, high = np.percentile(valid, [1, 99.5])
 
         if high <= low:
@@ -498,6 +496,7 @@ class AlignmentStep(QWidget):
             self.band_offsets[reference] = {"x": 0.0, "y": 0.0}
 
         self.update_offset_spins()
+        self.populate_summary()
         self.update_preview()
         self.persist_settings()
 
@@ -506,6 +505,7 @@ class AlignmentStep(QWidget):
             return
 
         self.update_offset_spins()
+        self.setFocus()
 
     def update_offset_spins(self):
         band = self.current_adjust_band()
@@ -564,6 +564,7 @@ class AlignmentStep(QWidget):
         self.populate_summary()
         self.update_preview()
         self.persist_settings()
+        self.setFocus()
 
     def reset_current_band(self):
         band = self.current_adjust_band()
@@ -669,7 +670,6 @@ class AlignmentStep(QWidget):
                 prefilter=False,
             ).astype(np.float32, copy=False)
         except Exception:
-            # Fallback for environments without scipy shift; integer-only movement.
             return np.roll(image, shift=(int(round(y)), int(round(x))), axis=(0, 1))
 
     def composite_rgb(self) -> np.ndarray | None:
@@ -786,7 +786,6 @@ class AlignmentStep(QWidget):
 
         reference_band = self.current_reference_band()
 
-        # Keep legacy/simple field populated.
         project.alignment_mode = "visual_offsets"
         project.manual_offsets = {
             band: {

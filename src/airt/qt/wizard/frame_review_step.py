@@ -357,6 +357,16 @@ class FrameReviewStep(QWidget):
             )
             return
 
+        if len(selected_visible) > 20:
+            QMessageBox.information(
+                self,
+                "Too many files for preview",
+                "Preview is limited to 20 selected files at a time to avoid slowing down or freezing the application.\n\n"
+                f"Current selection in this filter: {len(selected_visible)} files.\n\n"
+                "Use Type/Band filters or clear some files before opening the preview.",
+            )
+            return
+
         dialog = FitsPreviewDialog(selected_visible, self)
 
         if dialog.exec():
@@ -433,5 +443,6 @@ class FrameReviewStep(QWidget):
         self.wizard.footer.set_status("Frame selection saved.")
         self.wizard.go_to_step(4)
         return False
+
 
 
