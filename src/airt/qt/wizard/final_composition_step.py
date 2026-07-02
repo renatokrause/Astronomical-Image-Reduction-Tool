@@ -127,6 +127,10 @@ class FinalCompositionStep(QWidget):
         composition_layout.addWidget(QLabel("Contrast"), 3, 0)
         composition_layout.addWidget(self.contrast_spin, 3, 1)
 
+        self.reset_composition_button = QPushButton("Reset")
+        self.reset_composition_button.clicked.connect(self.reset_settings)
+        composition_layout.addWidget(self.reset_composition_button, 3, 3)
+
         root.addWidget(composition_card)
 
         export_card = QFrame()
@@ -210,6 +214,7 @@ class FinalCompositionStep(QWidget):
         actions_layout.addWidget(self.zoom_in_button)
         actions_layout.addWidget(self.zoom_out_button)
 
+        actions_card.setVisible(False)
         root.addWidget(actions_card)
 
         preview_card = QFrame()
