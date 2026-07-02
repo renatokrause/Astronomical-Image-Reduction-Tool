@@ -529,13 +529,10 @@ class BackgroundStep(QWidget):
 
             item = direct or normalized_match or {}
 
-            channel = item.get("channel", "")
-            if not channel:
-                channel = self.default_channel_for_band(band)
-
             result[band] = {
                 "hex_color": item.get("hex_color", "#808080"),
-                "channel": channel,
+                "channel": item.get("channel", self.default_channel_for_band(band)),
+                "normalized_band": normalized,
             }
 
         return result
@@ -546,20 +543,26 @@ class BackgroundStep(QWidget):
         if normalized == "L":
             return "L"
 
-        if normalized in {"B", "HB", "OIII"}:
-            return "B"
+        if normalized in {"R", "HA", "SII", "I"}:
+            return "R"
 
         if normalized in {"G", "V"}:
             return "G"
 
-        if normalized in {"R", "HA", "SII", "I"}:
-            return "R"
+        if normalized in {"B", "HB", "OIII"}:
+            return "B"
 
         return "-"
 
-    def channel_to_rgb_weight(self, channel: str, hex_color: str) -> tuple[float, float, float]:
-        channel = (channel or "-").upper().strip()
+    def channel_weights_for_band(self, band: str, mapping_item: dict[str, str]) -> tuple[float, float, float]:
+        normalized = normalize_band_name(band)
+        channel = (mapping_item.get("channel") or self.default_channel_for_band(band)).upper().strip()
 
+        # Luminance is handled separately.
+        if normalized == "L" or channel == "L":
+            return (0.0, 0.0, 0.0)
+
+        # Prefer explicit channels saved by screen 5.
         if channel == "R":
             return (1.0, 0.0, 0.0)
 
@@ -581,31 +584,85 @@ class BackgroundStep(QWidget):
         if channel == "R+G+B":
             return (1.0, 1.0, 1.0)
 
-        if channel == "L":
-            return (0.0, 0.0, 0.0)
+        # Fallback by normalized astronomical band.
+        if normalized in {"R", "HA", "SII", "I"}:
+            return (1.0, 0.0, 0.0)
 
-        return self.hex_to_rgb(hex_color)
+        if normalized in {"G", "V"}:
+            return (0.0, 1.0, 0.0)
 
-    def normalize_channel(self, channel: np.ndarray) -> np.ndarray:
+        if normalized in {"B", "HB", "OIII"}:
+            return (0.0, 0.0, 1.0)
+
+        return self.hex_to_rgb(mapping_item.get("hex_color", "#808080"))
+
+    def robust_stretch_channel(self, channel: np.ndarray) -> np.ndarray:
         finite = np.isfinite(channel)
 
         if not np.any(finite):
             return np.zeros_like(channel, dtype=np.float32)
 
         valid = channel[finite]
-        high = np.percentile(valid, 99.5)
 
-        if high <= 0:
+        low, high = np.percentile(valid, [0.5, 99.7])
+
+        if high <= low:
+            low, high = np.percentile(valid, [1.0, 99.5])
+
+        if high <= low:
+            low = float(np.min(valid))
             high = float(np.max(valid))
 
-        if high <= 0:
+        if high <= low:
             return np.zeros_like(channel, dtype=np.float32)
 
-        normalized = channel / high
-        normalized = np.clip(normalized, 0, 1)
-        normalized[~finite] = 0
+        stretched = (channel - low) / (high - low)
+        stretched = np.clip(stretched, 0, 1)
+        stretched[~finite] = 0
 
-        return normalized.astype(np.float32, copy=False)
+        # Gentle non-linear screen stretch, closer to final preview behavior.
+        stretched = np.sqrt(stretched)
+
+        return stretched.astype(np.float32, copy=False)
+
+    def neutralize_preview_background(self, rgb: np.ndarray) -> np.ndarray:
+        # Estimate sky from darker pixels and equalize channel medians.
+        luminance = np.median(rgb, axis=2)
+        finite = np.isfinite(luminance)
+
+        if not np.any(finite):
+            return rgb
+
+        threshold = np.percentile(luminance[finite], 60)
+        sky_mask = finite & (luminance <= threshold)
+
+        if not np.any(sky_mask):
+            return rgb
+
+        medians = np.array(
+            [
+                np.median(rgb[:, :, 0][sky_mask]),
+                np.median(rgb[:, :, 1][sky_mask]),
+                np.median(rgb[:, :, 2][sky_mask]),
+            ],
+            dtype=np.float32,
+        )
+
+        target = float(np.median(medians[medians > 0])) if np.any(medians > 0) else 0.0
+
+        if target <= 0:
+            return rgb
+
+        factors = np.ones(3, dtype=np.float32)
+
+        for idx in range(3):
+            if medians[idx] > 0:
+                factors[idx] = target / medians[idx]
+
+        factors = np.clip(factors, 0.35, 2.8)
+
+        balanced = rgb * factors.reshape(1, 1, 3)
+        return np.clip(balanced, 0, 1)
 
     def hex_to_rgb(self, hex_color: str) -> tuple[float, float, float]:
         value = (hex_color or "#808080").strip().lstrip("#")
@@ -629,13 +686,15 @@ class BackgroundStep(QWidget):
             return None
 
         height, width = next(iter(shapes))
-        rgb = np.zeros((height, width, 3), dtype=np.float32)
-        active_channels = np.zeros(3, dtype=np.float32)
 
+        linear_rgb = np.zeros((height, width, 3), dtype=np.float32)
+        channel_weight_sum = np.zeros(3, dtype=np.float32)
         luminance = None
 
         mapping = self.color_mapping_for_bands()
         offsets = self.alignment_offsets()
+
+        used_summary = []
 
         for band in sort_bands_recommended(self.band_arrays.keys()):
             image = self.band_arrays[band]
@@ -647,53 +706,68 @@ class BackgroundStep(QWidget):
                 float(offset.get("y", 0.0)),
             )
 
-            item = mapping.get(band, {})
-            hex_color = item.get("hex_color", "#808080")
-            channel = item.get("channel", self.default_channel_for_band(band))
-            normalized_band = normalize_band_name(band)
+            mapping_item = mapping.get(band, {})
+            normalized = normalize_band_name(band)
+            channel = (mapping_item.get("channel") or self.default_channel_for_band(band)).upper().strip()
 
-            if channel == "L" or normalized_band == "L":
+            if normalized == "L" or channel == "L":
                 luminance = shifted if luminance is None else np.maximum(luminance, shifted)
+                used_summary.append(f"{band}->L")
                 continue
 
-            color = self.channel_to_rgb_weight(channel, hex_color)
+            weights = self.channel_weights_for_band(band, mapping_item)
 
-            if color == (0.0, 0.0, 0.0):
+            if weights == (0.0, 0.0, 0.0):
                 continue
 
-            for channel_index, weight in enumerate(color):
+            used_summary.append(f"{band}->{channel or self.default_channel_for_band(band)}")
+
+            for idx, weight in enumerate(weights):
                 if weight > 0:
-                    rgb[:, :, channel_index] += shifted * weight
-                    active_channels[channel_index] += weight
+                    linear_rgb[:, :, idx] += shifted * float(weight)
+                    channel_weight_sum[idx] += float(weight)
 
-        if np.all(active_channels == 0):
+        if np.all(channel_weight_sum == 0):
             if luminance is None:
                 return None
 
-            gray = self.normalize_channel(luminance)
+            gray = self.robust_stretch_channel(luminance)
+            self._last_color_debug = "Only luminance available"
             return np.dstack([gray, gray, gray]).astype(np.float32, copy=False)
 
-        for channel_index in range(3):
-            if active_channels[channel_index] > 0:
-                rgb[:, :, channel_index] = self.normalize_channel(rgb[:, :, channel_index])
+        for idx in range(3):
+            if channel_weight_sum[idx] > 0:
+                linear_rgb[:, :, idx] /= channel_weight_sum[idx]
 
-        rgb = np.clip(rgb, 0, 1)
+        stretched_rgb = np.zeros_like(linear_rgb, dtype=np.float32)
+
+        for idx in range(3):
+            if channel_weight_sum[idx] > 0:
+                stretched_rgb[:, :, idx] = self.robust_stretch_channel(linear_rgb[:, :, idx])
+
+        # If one channel is missing, keep it black. Do not copy red into missing channels,
+        # otherwise the preview becomes falsely monochrome.
+        stretched_rgb = self.neutralize_preview_background(stretched_rgb)
 
         if luminance is not None:
-            luma = self.normalize_channel(luminance)
+            luma = self.robust_stretch_channel(luminance)
 
-            max_channel = np.max(rgb, axis=2, keepdims=True)
-            hue = np.divide(
-                rgb,
+            max_channel = np.max(stretched_rgb, axis=2, keepdims=True)
+            chroma = np.divide(
+                stretched_rgb,
                 np.maximum(max_channel, 1e-6),
-                out=np.zeros_like(rgb),
+                out=np.zeros_like(stretched_rgb),
                 where=max_channel > 1e-6,
             )
 
-            colorized_luma = hue * luma[:, :, None]
-            rgb = np.where(max_channel > 1e-6, colorized_luma, np.dstack([luma, luma, luma]))
+            stretched_rgb = np.where(
+                max_channel > 1e-6,
+                chroma * luma[:, :, None],
+                np.dstack([luma, luma, luma]),
+            )
 
-        return np.clip(rgb, 0, 1)
+        self._last_color_debug = ", ".join(used_summary)
+        return np.clip(stretched_rgb, 0, 1)
 
     def protection_percentile(self) -> float:
         protection = self.protection_combo.currentData() or "medium"
@@ -837,7 +911,7 @@ class BackgroundStep(QWidget):
 
         self.preview_info.setText(
             f"Background correction: {state} | Mode: {mode} | View: {view} | Protection: {protection} | "
-            f"Bands: {', '.join(sort_bands_recommended(self.band_arrays.keys()))}"
+            f"Bands: {', '.join(sort_bands_recommended(self.band_arrays.keys()))} | Channels: {getattr(self, '_last_color_debug', '')}"
         )
 
         self.fit_preview()
