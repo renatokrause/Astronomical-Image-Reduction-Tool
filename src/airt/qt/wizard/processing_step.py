@@ -5,8 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QWidget,
     QVBoxLayout,
     QGridLayout,
@@ -124,7 +125,9 @@ class ProcessingStep(QWidget):
         self.progress_bar.setValue(0)
 
         self.generated_list = QListWidget()
-        self.generated_list.setMinimumHeight(220)
+        self.generated_list.setMinimumHeight(130)
+        self.generated_list.setMaximumHeight(170)
+        self.generated_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         progress_layout.addWidget(progress_title)
         progress_layout.addWidget(self.status_label)
@@ -143,6 +146,10 @@ class ProcessingStep(QWidget):
         self.progress_bar.setValue(0)
 
         self.wizard.footer.back_button.setEnabled(False)
+
+        if hasattr(self.wizard.footer, "cancel_button"):
+            self.wizard.footer.cancel_button.setVisible(False)
+
         self.wizard.footer.next_button.setText("Finish")
         self.wizard.footer.next_button.setEnabled(False)
         self.wizard.footer.set_status("Processing final outputs.")
@@ -152,8 +159,10 @@ class ProcessingStep(QWidget):
         QTimer.singleShot(250, self.start_processing)
 
     def on_leave(self, target_index: int):
-        if target_index != self.wizard.stack.currentIndex():
-            self.wizard.footer.next_button.setText("Next")
+        if hasattr(self.wizard.footer, "cancel_button"):
+            self.wizard.footer.cancel_button.setVisible(True)
+
+        self.wizard.footer.next_button.setText("Next")
 
     def refresh_summary(self):
         project = self.wizard.project
@@ -180,6 +189,13 @@ class ProcessingStep(QWidget):
         self.frames_label.setText(str(frame_count))
         self.bands_label.setText(", ".join(bands) if bands else "None")
 
+    def report_progress(self, value: int, message: str):
+        self.progress_bar.setValue(int(value))
+        self.status_label.setText(message)
+        self.generated_list.addItem(QListWidgetItem(message))
+        self.generated_list.scrollToBottom()
+        QApplication.processEvents()
+
     def start_processing(self):
         if self.processing:
             return
@@ -202,24 +218,23 @@ class ProcessingStep(QWidget):
         self.generated_files = []
         self.generated_list.clear()
 
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
         try:
-            self.progress_bar.setValue(10)
-            self.status_label.setText("Rendering final image...")
-            self.wizard.footer.set_status("Rendering final image.")
+            self.report_progress(5, "Starting final processing.")
+            self.wizard.footer.set_status("Processing final image.")
 
-            result = build_final_image(project)
+            result = build_final_image(project, progress_callback=self.report_progress)
 
-            self.progress_bar.setValue(70)
-            self.status_label.setText("Saving output files...")
-            self.wizard.footer.set_status("Saving output files.")
-
+            self.report_progress(85, "Saving selected output formats.")
             self.generated_files = save_final_outputs(project, result, export)
 
-            self.progress_bar.setValue(100)
-            self.status_label.setText("Done. Final files were generated.")
+            self.report_progress(100, "Done. Final files were generated.")
 
             for path in self.generated_files:
-                self.generated_list.addItem(QListWidgetItem(str(path)))
+                self.generated_list.addItem(QListWidgetItem(f"Generated: {path}"))
+
+            self.generated_list.scrollToBottom()
 
             self.finished = True
             self.wizard.footer.next_button.setEnabled(True)
@@ -232,6 +247,9 @@ class ProcessingStep(QWidget):
         except Exception as exc:
             self.fail_processing(str(exc))
         finally:
+            while QApplication.overrideCursor() is not None:
+                QApplication.restoreOverrideCursor()
+
             self.processing = False
 
     def fail_processing(self, message: str):

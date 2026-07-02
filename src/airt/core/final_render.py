@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -671,6 +671,99 @@ def build_band_masters(project) -> dict[str, np.ndarray]:
     return aligned
 
 
+def neutralize_linear_rgb_background(linear_rgb: np.ndarray) -> np.ndarray:
+    rgb = linear_rgb.astype(np.float32, copy=True)
+    luminance = np.nanmean(rgb, axis=2)
+    finite = np.isfinite(luminance)
+
+    if not np.any(finite):
+        return np.nan_to_num(rgb, nan=0.0).astype(np.float32, copy=False)
+
+    sky_limit = np.nanpercentile(luminance[finite], 45)
+    sky_mask = finite & (luminance <= sky_limit)
+
+    if not np.any(sky_mask):
+        return np.nan_to_num(rgb, nan=0.0).astype(np.float32, copy=False)
+
+    for index in range(3):
+        channel = rgb[:, :, index]
+        sky_values = channel[sky_mask]
+        sky_values = sky_values[np.isfinite(sky_values)]
+
+        if sky_values.size:
+            channel = channel - float(np.median(sky_values))
+            rgb[:, :, index] = channel
+
+    # Equaliza resposta de cor usando regiões de sinal moderado/alto.
+    luminance = np.nanmean(rgb, axis=2)
+    finite = np.isfinite(luminance)
+
+    if np.any(finite):
+        signal_limit = np.nanpercentile(luminance[finite], 75)
+        signal_mask = finite & (luminance >= signal_limit)
+
+        if np.any(signal_mask):
+            levels = []
+
+            for index in range(3):
+                values = rgb[:, :, index][signal_mask]
+                values = values[np.isfinite(values)]
+                values = values[values > 0]
+
+                if values.size:
+                    levels.append(float(np.percentile(values, 75)))
+                else:
+                    levels.append(0.0)
+
+            positive = [value for value in levels if value > 0]
+
+            if positive:
+                target = float(np.median(positive))
+
+                for index, level in enumerate(levels):
+                    if level > 0:
+                        factor = target / level
+                        factor = float(np.clip(factor, 0.45, 2.2))
+                        rgb[:, :, index] *= factor
+
+    return np.nan_to_num(rgb, nan=0.0).astype(np.float32, copy=False)
+
+
+def stretch_rgb_preserve_color(
+    linear_rgb: np.ndarray,
+    stretch: str,
+    luminance_master: np.ndarray | None = None,
+) -> np.ndarray:
+    rgb = np.nan_to_num(linear_rgb, nan=0.0).astype(np.float32, copy=False)
+    rgb = np.maximum(rgb, 0)
+
+    if luminance_master is not None:
+        luma_linear = np.nan_to_num(luminance_master, nan=0.0).astype(np.float32, copy=False)
+        luma_linear = np.maximum(luma_linear, 0)
+    else:
+        luma_linear = (
+            0.2126 * rgb[:, :, 0]
+            + 0.7152 * rgb[:, :, 1]
+            + 0.0722 * rgb[:, :, 2]
+        )
+
+    luma_stretched = final_stretch_channel(luma_linear, stretch)
+
+    denominator = np.maximum(luma_linear, np.nanpercentile(luma_linear, 5) + 1e-6)
+    chroma = rgb / denominator[:, :, None]
+    chroma = np.clip(chroma, 0, 3.5)
+
+    out = chroma * luma_stretched[:, :, None]
+
+    high = np.percentile(out[np.isfinite(out)], 99.9) if np.any(np.isfinite(out)) else 1.0
+
+    if high > 1.0:
+        out = out / high
+
+    out = neutralize_rgb_background(np.clip(out, 0, 1))
+    return np.clip(out, 0, 1).astype(np.float32, copy=False)
+
+
 def compose_final_rgb(project, masters: dict[str, np.ndarray], rendering: str, stretch: str) -> np.ndarray:
     background_settings = project.output_options.get("background_correction", {}) if project else {}
     color_mapping = project.output_options.get("color_mapping", {}) if project else {}
@@ -714,35 +807,13 @@ def compose_final_rgb(project, masters: dict[str, np.ndarray], rendering: str, s
         if weights_sum[index] > 0:
             linear_rgb[:, :, index] /= weights_sum[index]
 
-    stretched_rgb = np.zeros_like(linear_rgb, dtype=np.float32)
+    linear_rgb = neutralize_linear_rgb_background(linear_rgb)
+    rgb = stretch_rgb_preserve_color(linear_rgb, stretch, luminance)
 
-    for index in range(3):
-        if weights_sum[index] > 0:
-            stretched_rgb[:, :, index] = final_stretch_channel(linear_rgb[:, :, index], stretch)
-
-    stretched_rgb = neutralize_rgb_background(stretched_rgb)
-
-    if luminance is not None:
-        luma = final_stretch_channel(luminance, stretch)
-        max_channel = np.max(stretched_rgb, axis=2, keepdims=True)
-
-        chroma = np.divide(
-            stretched_rgb,
-            np.maximum(max_channel, 1e-6),
-            out=np.zeros_like(stretched_rgb),
-            where=max_channel > 1e-6,
-        )
-
-        stretched_rgb = np.where(
-            max_channel > 1e-6,
-            chroma * luma[:, :, None],
-            np.dstack([luma, luma, luma]),
-        )
-
-    return np.clip(stretched_rgb, 0, 1).astype(np.float32, copy=False)
+    return np.clip(rgb, 0, 1).astype(np.float32, copy=False)
 
 
-def build_final_image(project, settings: dict | None = None) -> FinalRenderResult:
+def build_final_image(project, settings: dict | None = None, progress_callback=None) -> FinalRenderResult:
     settings = settings or {}
     composition = project.output_options.get("final_composition", {}) if project else {}
 
@@ -752,8 +823,19 @@ def build_final_image(project, settings: dict | None = None) -> FinalRenderResul
     brightness = float(settings.get("brightness", composition.get("brightness", 0.0)))
     contrast = float(settings.get("contrast", composition.get("contrast", 1.0)))
 
+    if progress_callback:
+        progress_callback(10, "Building calibration masters and stacking selected bands...")
+
     masters = build_band_masters(project)
+
+    if progress_callback:
+        progress_callback(65, "Composing final image and applying background correction...")
+
     rgb = compose_final_rgb(project, masters, rendering, stretch)
+
+    if progress_callback:
+        progress_callback(80, "Applying final stretch and visual adjustments...")
+
     rgb = apply_visual_adjustments(rgb, saturation, brightness, contrast)
 
     return FinalRenderResult(
@@ -783,9 +865,6 @@ def rgb_to_qimage(rgb: np.ndarray) -> QImage:
 def save_final_outputs(project, result: FinalRenderResult, export_settings: dict) -> list[Path]:
     output_dir = output_folder_for_project(project)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    debug_dir = output_dir / "debug"
-    debug_dir.mkdir(parents=True, exist_ok=True)
 
     base_name = export_settings.get("file_base_name") or object_name_for_project(project)
     formats = export_settings.get("formats", {})
@@ -826,27 +905,5 @@ def save_final_outputs(project, result: FinalRenderResult, export_settings: dict
         data = np.moveaxis(result.image.astype(np.float32), 2, 0)
         fits.writeto(path, data, overwrite=True)
         generated.append(path)
-
-    # Always keep masters for now while we validate quality.
-    for band, master in result.masters.items():
-        safe_band = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(band))
-        path = debug_dir / f"{base_name}_{safe_band}_master.fits"
-        fits.writeto(path, master.astype(np.float32), overwrite=True)
-        generated.append(path)
-
-    log_path = debug_dir / "processing_log.txt"
-    log_path.write_text(
-        "\\n".join(
-            [
-                f"Object: {object_name_for_project(project)}",
-                f"Mode: {result.mode}",
-                f"Bands: {', '.join(result.bands)}",
-                f"Output: {output_dir}",
-                "Pipeline: calibrate -> align -> stack -> background correction -> compose -> stretch -> export",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    generated.append(log_path)
 
     return generated
