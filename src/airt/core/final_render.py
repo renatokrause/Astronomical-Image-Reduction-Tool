@@ -847,6 +847,9 @@ def build_final_image(project, settings: dict | None = None, progress_callback=N
 
 
 def rgb_to_qimage(rgb: np.ndarray) -> QImage:
+    # FITS arrays use scientific image coordinates. For visual exports,
+    # match the orientation used by the previous AIRT/Colab outputs.
+    rgb = np.flipud(rgb)
     image8 = (np.clip(rgb, 0, 1) * 255).astype(np.uint8)
     image8 = np.ascontiguousarray(image8)
 

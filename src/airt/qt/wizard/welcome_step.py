@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -38,7 +38,7 @@ class HeroBanner(QFrame):
         layout.setContentsMargins(42, 34, 42, 34)
         layout.setSpacing(8)
 
-        title = QLabel("Welcome to AIRT")
+        title = QLabel("Welcome")
         title.setObjectName("heroBannerTitle")
         title.setTextFormat(Qt.RichText)
 

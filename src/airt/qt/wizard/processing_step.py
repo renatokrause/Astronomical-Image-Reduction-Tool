@@ -10,13 +10,10 @@ from PySide6.QtWidgets import (
     QApplication,
     QWidget,
     QVBoxLayout,
-    QGridLayout,
     QLabel,
     QFrame,
     QScrollArea,
     QProgressBar,
-    QListWidget,
-    QListWidgetItem,
 )
 
 from airt.project import autosave_project
@@ -24,7 +21,6 @@ from airt.core.final_render import (
     build_final_image,
     save_final_outputs,
     output_folder_for_project,
-    object_name_for_project,
 )
 
 
@@ -56,7 +52,7 @@ class ProcessingStep(QWidget):
         title.setObjectName("pageTitle")
 
         subtitle = QLabel(
-            "Final files are generated automatically using the selected frames and saved project settings."
+            "Generate the final image files automatically using the selected frames and saved project settings."
         )
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
@@ -64,75 +60,33 @@ class ProcessingStep(QWidget):
         root.addWidget(title)
         root.addWidget(subtitle)
 
-        summary_card = QFrame()
-        summary_card.setObjectName("contentCard")
-        summary_layout = QGridLayout(summary_card)
-        summary_layout.setContentsMargins(24, 20, 24, 24)
-        summary_layout.setHorizontalSpacing(14)
-        summary_layout.setVerticalSpacing(12)
-        summary_layout.setColumnMinimumWidth(0, 160)
-        summary_layout.setColumnStretch(1, 1)
-
-        summary_title = QLabel("Summary")
-        summary_title.setObjectName("sectionTitle")
-
-        self.object_label = QLabel("")
-        self.output_label = QLabel("")
-        self.formats_label = QLabel("")
-        self.frames_label = QLabel("")
-        self.bands_label = QLabel("")
-
-        for label in [
-            self.object_label,
-            self.output_label,
-            self.formats_label,
-            self.frames_label,
-            self.bands_label,
-        ]:
-            label.setObjectName("mutedText")
-            label.setWordWrap(True)
-
-        summary_layout.addWidget(summary_title, 0, 0, 1, 2)
-        summary_layout.addWidget(QLabel("Object"), 1, 0)
-        summary_layout.addWidget(self.object_label, 1, 1)
-        summary_layout.addWidget(QLabel("Output folder"), 2, 0)
-        summary_layout.addWidget(self.output_label, 2, 1)
-        summary_layout.addWidget(QLabel("Formats"), 3, 0)
-        summary_layout.addWidget(self.formats_label, 3, 1)
-        summary_layout.addWidget(QLabel("Selected frames"), 4, 0)
-        summary_layout.addWidget(self.frames_label, 4, 1)
-        summary_layout.addWidget(QLabel("Bands"), 5, 0)
-        summary_layout.addWidget(self.bands_label, 5, 1)
-
-        summary_card.setVisible(False)
-        root.addWidget(summary_card)
-
         progress_card = QFrame()
         progress_card.setObjectName("contentCard")
+
         progress_layout = QVBoxLayout(progress_card)
         progress_layout.setContentsMargins(24, 20, 24, 24)
-        progress_layout.setSpacing(12)
+        progress_layout.setSpacing(14)
 
-        progress_title = QLabel("Processing")
-        progress_title.setObjectName("sectionTitle")
+        section_title = QLabel("Process & Save")
+        section_title.setObjectName("sectionTitle")
 
         self.status_label = QLabel("Processing will start automatically.")
         self.status_label.setObjectName("mutedText")
         self.status_label.setWordWrap(True)
 
+        self.detail_label = QLabel("")
+        self.detail_label.setObjectName("infoText")
+        self.detail_label.setWordWrap(True)
+        self.detail_label.setMinimumHeight(120)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
 
-        self.generated_list = QListWidget()
-        self.generated_list.setMinimumHeight(130)
-        self.generated_list.setMaximumHeight(170)
-        self.generated_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
-        progress_layout.addWidget(progress_title)
+        progress_layout.addWidget(section_title)
         progress_layout.addWidget(self.status_label)
         progress_layout.addWidget(self.progress_bar)
-        progress_layout.addWidget(self.generated_list)
+        progress_layout.addWidget(self.detail_label)
 
         root.addWidget(progress_card)
         root.addStretch(1)
@@ -142,8 +96,9 @@ class ProcessingStep(QWidget):
     def on_enter(self):
         self.finished = False
         self.generated_files = []
-        self.generated_list.clear()
         self.progress_bar.setValue(0)
+        self.status_label.setText("Processing will start automatically.")
+        self.detail_label.setText("Preparing final processing.")
 
         self.wizard.footer.back_button.setEnabled(False)
 
@@ -154,8 +109,6 @@ class ProcessingStep(QWidget):
         self.wizard.footer.next_button.setEnabled(False)
         self.wizard.footer.set_status("Processing final outputs.")
 
-        self.refresh_summary()
-
         QTimer.singleShot(250, self.start_processing)
 
     def on_leave(self, target_index: int):
@@ -164,36 +117,17 @@ class ProcessingStep(QWidget):
 
         self.wizard.footer.next_button.setText("Next")
 
-    def refresh_summary(self):
-        project = self.wizard.project
-
-        if not project:
-            return
-
-        selected = getattr(project, "selected_object_files", {}) or {}
-        bands = [band for band, paths in selected.items() if paths]
-        frame_count = sum(len(paths) for paths in selected.values())
-
-        export = project.output_options.get("final_export", {}) or {}
-        formats = export.get("formats", {}) or {}
-
-        enabled_formats = [
-            name.upper()
-            for name, enabled in formats.items()
-            if enabled
-        ]
-
-        self.object_label.setText(object_name_for_project(project))
-        self.output_label.setText(str(output_folder_for_project(project)))
-        self.formats_label.setText(", ".join(enabled_formats) if enabled_formats else "None")
-        self.frames_label.setText(str(frame_count))
-        self.bands_label.setText(", ".join(bands) if bands else "None")
-
     def report_progress(self, value: int, message: str):
         self.progress_bar.setValue(int(value))
         self.status_label.setText(message)
-        self.generated_list.addItem(QListWidgetItem(message))
-        self.generated_list.scrollToBottom()
+
+        current = self.detail_label.text().strip()
+        next_text = message if not current else f"{current}\\n{message}"
+
+        # Mantém o texto limitado para não transformar isso em um listbox disfarçado.
+        lines = next_text.splitlines()[-8:]
+        self.detail_label.setText("\\n".join(lines))
+
         QApplication.processEvents()
 
     def start_processing(self):
@@ -216,7 +150,6 @@ class ProcessingStep(QWidget):
         self.processing = True
         self.finished = False
         self.generated_files = []
-        self.generated_list.clear()
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -229,12 +162,8 @@ class ProcessingStep(QWidget):
             self.report_progress(85, "Saving selected output formats.")
             self.generated_files = save_final_outputs(project, result, export)
 
-            self.report_progress(100, "Done. Final files were generated.")
-
-            for path in self.generated_files:
-                self.generated_list.addItem(QListWidgetItem(f"Generated: {path}"))
-
-            self.generated_list.scrollToBottom()
+            generated_text = "\\n".join(str(path) for path in self.generated_files)
+            self.report_progress(100, f"Done. Final files generated:\\n{generated_text}")
 
             self.finished = True
             self.wizard.footer.next_button.setEnabled(True)
@@ -255,6 +184,7 @@ class ProcessingStep(QWidget):
     def fail_processing(self, message: str):
         self.progress_bar.setValue(0)
         self.status_label.setText(f"Processing failed: {message}")
+        self.detail_label.setText(message)
         self.finished = False
 
         self.wizard.footer.back_button.setEnabled(True)
