@@ -358,7 +358,17 @@ class FrameReviewStep(QWidget):
             return
 
         dialog = FitsPreviewDialog(selected_visible, self)
-        dialog.exec()
+
+        if dialog.exec():
+            applied_paths = dialog.selected_paths()
+            preview_paths = {item.path for item in selected_visible}
+
+            for path in preview_paths:
+                self.selection_state[path] = path in applied_paths
+
+            self.populate_table()
+            self.persist_selection()
+            self.wizard.footer.set_status("Preview selection applied to frame review.")
 
     def save_to_project(self):
         self.sync_displayed_selection()
@@ -423,4 +433,5 @@ class FrameReviewStep(QWidget):
         self.wizard.footer.set_status("Frame selection saved.")
         self.wizard.go_to_step(4)
         return False
+
 

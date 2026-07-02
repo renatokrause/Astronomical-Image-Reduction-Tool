@@ -95,7 +95,8 @@ class FitsPreviewDialog(QDialog):
         self.file_list.itemSelectionChanged.connect(self.load_selected_files)
 
         for item in self.files:
-            label = f"{item.kind.upper()}  {item.band if item.band != '-' else 'None'}  —  {Path(item.path).name}"
+            band = item.band if item.band != "-" else "None"
+            label = f"{item.kind.upper()}  {band}  —  {Path(item.path).name}"
             list_item = QListWidgetItem(label)
             list_item.setData(Qt.UserRole, item.path)
             self.file_list.addItem(list_item)
@@ -118,14 +119,19 @@ class FitsPreviewDialog(QDialog):
         bottom = QHBoxLayout()
         bottom.addStretch(1)
 
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.accept)
-        bottom.addWidget(close_button)
+        self.apply_button = QPushButton("Apply")
+        self.apply_button.clicked.connect(self.accept)
+
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+
+        bottom.addWidget(self.apply_button)
+        bottom.addWidget(self.cancel_button)
 
         root.addLayout(bottom)
 
         if self.files:
-            self.file_list.setCurrentRow(0)
+            self.select_all_files()
 
     def select_all_files(self):
         self.file_list.selectAll()
@@ -136,11 +142,14 @@ class FitsPreviewDialog(QDialog):
         self.current_pixmap_item = None
         self.info_label.setText("No files selected.")
 
-    def selected_file_infos(self):
-        selected_paths = {
+    def selected_paths(self) -> set[str]:
+        return {
             item.data(Qt.UserRole)
             for item in self.file_list.selectedItems()
         }
+
+    def selected_file_infos(self):
+        selected_paths = self.selected_paths()
 
         return [
             info
@@ -182,14 +191,15 @@ class FitsPreviewDialog(QDialog):
                 else f"{pixmap.width()} × {pixmap.height()}"
             )
             exposure = "-" if info.exptime is None else f"{info.exptime:g}s"
+            band = info.band if info.band != "-" else "None"
 
             self.info_label.setText(
-                f"{path.name} | Type: {info.kind.upper()} | Band: {info.band if info.band != '-' else 'None'} "
+                f"{path.name} | Type: {info.kind.upper()} | Band: {band} "
                 f"| Exposure: {exposure} | Size: {size_text}"
             )
         else:
             kinds = sorted({info.kind.upper() for info in selected})
-            bands = sorted({info.band if info.band != '-' else 'None' for info in selected})
+            bands = sorted({info.band if info.band != "-" else "None" for info in selected})
             self.info_label.setText(
                 f"Combined preview of {len(selected)} selected files | "
                 f"Types: {', '.join(kinds)} | Bands: {', '.join(bands)} | Combination: median"
@@ -282,4 +292,3 @@ class FitsPreviewDialog(QDialog):
 
         self.view.resetTransform()
         self.view.fitInView(self.current_pixmap_item, Qt.KeepAspectRatio)
-
