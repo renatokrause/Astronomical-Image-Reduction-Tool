@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 import numpy as np
@@ -24,8 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from airt.project import autosave_project
-from airt.core.bands import sort_bands_recommended, normalize_band_name
-from airt.core.color_mapping import build_color_mapping
+from airt.core.bands import sort_bands_recommended
 
 
 class BackgroundPreviewView(QGraphicsView):
@@ -105,7 +104,7 @@ class BackgroundStep(QWidget):
 
         self.apply_to_combo = QComboBox()
         self.apply_to_combo.addItem("Per band", "per_band")
-        self.apply_to_combo.addItem("RGB preview", "rgb_preview")
+        self.apply_to_combo.addItem("Preview only", "preview_only")
         self.apply_to_combo.currentIndexChanged.connect(self.on_settings_changed)
 
         self.protection_combo = QComboBox()
@@ -347,7 +346,6 @@ class BackgroundStep(QWidget):
 
     def set_combo_by_data(self, combo: QComboBox, value: str):
         index = combo.findData(value)
-
         if index >= 0:
             combo.setCurrentIndex(index)
 
@@ -485,194 +483,7 @@ class BackgroundStep(QWidget):
         except Exception:
             return np.roll(image, shift=(int(round(y)), int(round(x))), axis=(0, 1))
 
-    def color_mapping_for_bands(self) -> dict[str, dict[str, str]]:
-        project = self.wizard.project
-        bands = sort_bands_recommended(self.band_arrays.keys())
-
-        saved_mapping = {}
-        mode = "photometric"
-        custom_mapping = {}
-
-        if project:
-            saved_mapping = project.output_options.get("color_mapping", {}) or {}
-            mode = project.output_options.get("color_mapping_mode", "photometric") or "photometric"
-            custom_mapping = project.output_options.get("custom_color_mapping", {}) or {}
-
-        if not saved_mapping:
-            generated = build_color_mapping(
-                bands=bands,
-                mode=mode,
-                saved_custom=custom_mapping,
-            )
-            saved_mapping = {
-                item.band: {
-                    "hex_color": item.hex_color,
-                    "normalized_band": item.normalized_band,
-                    "channel": item.channel,
-                    "color_name": item.color_name,
-                }
-                for item in generated
-            }
-
-        result = {}
-
-        for band in bands:
-            normalized = normalize_band_name(band)
-
-            direct = saved_mapping.get(band, {})
-            normalized_match = None
-
-            for saved_band, saved_item in saved_mapping.items():
-                if normalize_band_name(saved_band) == normalized:
-                    normalized_match = saved_item
-                    break
-
-            item = direct or normalized_match or {}
-
-            result[band] = {
-                "hex_color": item.get("hex_color", "#808080"),
-                "channel": item.get("channel", self.default_channel_for_band(band)),
-                "normalized_band": normalized,
-            }
-
-        return result
-
-    def default_channel_for_band(self, band: str) -> str:
-        normalized = normalize_band_name(band)
-
-        if normalized == "L":
-            return "L"
-
-        if normalized in {"R", "HA", "SII", "I"}:
-            return "R"
-
-        if normalized in {"G", "V"}:
-            return "G"
-
-        if normalized in {"B", "HB", "OIII"}:
-            return "B"
-
-        return "-"
-
-    def channel_weights_for_band(self, band: str, mapping_item: dict[str, str]) -> tuple[float, float, float]:
-        normalized = normalize_band_name(band)
-        channel = (mapping_item.get("channel") or self.default_channel_for_band(band)).upper().strip()
-
-        if normalized == "L" or channel == "L":
-            return (0.0, 0.0, 0.0)
-
-        if channel == "R":
-            return (1.0, 0.0, 0.0)
-
-        if channel == "G":
-            return (0.0, 1.0, 0.0)
-
-        if channel == "B":
-            return (0.0, 0.0, 1.0)
-
-        if channel == "R+G":
-            return (1.0, 1.0, 0.0)
-
-        if channel == "R+B":
-            return (1.0, 0.0, 1.0)
-
-        if channel == "G+B":
-            return (0.0, 1.0, 1.0)
-
-        if channel == "R+G+B":
-            return (1.0, 1.0, 1.0)
-
-        if normalized in {"R", "HA", "SII", "I"}:
-            return (1.0, 0.0, 0.0)
-
-        if normalized in {"G", "V"}:
-            return (0.0, 1.0, 0.0)
-
-        if normalized in {"B", "HB", "OIII"}:
-            return (0.0, 0.0, 1.0)
-
-        return self.hex_to_rgb(mapping_item.get("hex_color", "#808080"))
-
-    def robust_stretch_channel(self, channel: np.ndarray) -> np.ndarray:
-        finite = np.isfinite(channel)
-
-        if not np.any(finite):
-            return np.zeros_like(channel, dtype=np.float32)
-
-        valid = channel[finite]
-
-        low, high = np.percentile(valid, [1.0, 99.7])
-
-        if high <= low:
-            low, high = np.percentile(valid, [2.0, 99.5])
-
-        if high <= low:
-            return np.zeros_like(channel, dtype=np.float32)
-
-        stretched = (channel - low) / (high - low)
-        stretched = np.clip(stretched, 0, 1)
-        stretched[~finite] = 0
-
-        # Preview stretch. This is visual only.
-        stretched = np.sqrt(stretched)
-
-        return stretched.astype(np.float32, copy=False)
-
-    def neutralize_preview_background(self, rgb: np.ndarray) -> np.ndarray:
-        luminance = np.mean(rgb, axis=2)
-        finite = np.isfinite(luminance)
-
-        if not np.any(finite):
-            return rgb
-
-        threshold = np.percentile(luminance[finite], 55)
-        sky_mask = finite & (luminance <= threshold)
-
-        if not np.any(sky_mask):
-            return rgb
-
-        medians = np.array(
-            [
-                np.median(rgb[:, :, 0][sky_mask]),
-                np.median(rgb[:, :, 1][sky_mask]),
-                np.median(rgb[:, :, 2][sky_mask]),
-            ],
-            dtype=np.float32,
-        )
-
-        positive = medians[medians > 0]
-
-        if positive.size == 0:
-            return rgb
-
-        target = float(np.median(positive))
-        factors = np.ones(3, dtype=np.float32)
-
-        for idx in range(3):
-            if medians[idx] > 0:
-                factors[idx] = target / medians[idx]
-
-        factors = np.clip(factors, 0.45, 2.2)
-        return np.clip(rgb * factors.reshape(1, 1, 3), 0, 1)
-
-    def boost_preview_saturation(self, rgb: np.ndarray, amount: float = 1.8) -> np.ndarray:
-        gray = np.mean(rgb, axis=2, keepdims=True)
-        saturated = gray + (rgb - gray) * amount
-        return np.clip(saturated, 0, 1)
-
-    def hex_to_rgb(self, hex_color: str) -> tuple[float, float, float]:
-        value = (hex_color or "#808080").strip().lstrip("#")
-
-        try:
-            return (
-                int(value[0:2], 16) / 255.0,
-                int(value[2:4], 16) / 255.0,
-                int(value[4:6], 16) / 255.0,
-            )
-        except Exception:
-            return (0.5, 0.5, 0.5)
-
-    def composite_rgb(self) -> np.ndarray | None:
+    def composite_grayscale(self) -> np.ndarray | None:
         if not self.band_arrays:
             return None
 
@@ -681,15 +492,8 @@ class BackgroundStep(QWidget):
         if len(shapes) != 1:
             return None
 
-        height, width = next(iter(shapes))
-
-        linear_rgb = np.zeros((height, width, 3), dtype=np.float32)
-        channel_weight_sum = np.zeros(3, dtype=np.float32)
-        luminance = None
-
-        mapping = self.color_mapping_for_bands()
         offsets = self.alignment_offsets()
-        used_summary = []
+        stacked = []
 
         for band in sort_bands_recommended(self.band_arrays.keys()):
             image = self.band_arrays[band]
@@ -701,70 +505,15 @@ class BackgroundStep(QWidget):
                 float(offset.get("y", 0.0)),
             )
 
-            mapping_item = mapping.get(band, {})
-            normalized = normalize_band_name(band)
-            channel = (mapping_item.get("channel") or self.default_channel_for_band(band)).upper().strip()
+            stacked.append(shifted)
 
-            if normalized == "L" or channel == "L":
-                luminance = shifted if luminance is None else np.maximum(luminance, shifted)
-                used_summary.append(f"{band}->L")
-                continue
+        if not stacked:
+            return None
 
-            weights = self.channel_weights_for_band(band, mapping_item)
+        if len(stacked) == 1:
+            return stacked[0].astype(np.float32, copy=False)
 
-            if weights == (0.0, 0.0, 0.0):
-                continue
-
-            used_summary.append(f"{band}->{channel or self.default_channel_for_band(band)}")
-
-            for idx, weight in enumerate(weights):
-                if weight > 0:
-                    linear_rgb[:, :, idx] += shifted * float(weight)
-                    channel_weight_sum[idx] += float(weight)
-
-        if np.all(channel_weight_sum == 0):
-            if luminance is None:
-                return None
-
-            gray = self.robust_stretch_channel(luminance)
-            self._last_color_debug = "Only luminance available"
-            return np.dstack([gray, gray, gray]).astype(np.float32, copy=False)
-
-        for idx in range(3):
-            if channel_weight_sum[idx] > 0:
-                linear_rgb[:, :, idx] /= channel_weight_sum[idx]
-
-        rgb = np.zeros_like(linear_rgb, dtype=np.float32)
-
-        for idx in range(3):
-            if channel_weight_sum[idx] > 0:
-                rgb[:, :, idx] = self.robust_stretch_channel(linear_rgb[:, :, idx])
-
-        # Do not synthesize missing channels. If only R is present, the result must stay red.
-        rgb = self.neutralize_preview_background(rgb)
-
-        if luminance is not None:
-            luma = self.robust_stretch_channel(luminance)
-            max_channel = np.max(rgb, axis=2, keepdims=True)
-
-            chroma = np.divide(
-                rgb,
-                np.maximum(max_channel, 1e-6),
-                out=np.zeros_like(rgb),
-                where=max_channel > 1e-6,
-            )
-
-            rgb = np.where(
-                max_channel > 1e-6,
-                chroma * luma[:, :, None],
-                np.dstack([luma, luma, luma]),
-            )
-
-        # Visual preview only: make channel differences easier to inspect.
-        rgb = self.boost_preview_saturation(rgb, amount=1.8)
-
-        self._last_color_debug = ", ".join(used_summary)
-        return np.clip(rgb, 0, 1)
+        return np.nanmedian(np.stack(stacked, axis=0), axis=0).astype(np.float32, copy=False)
 
     def protection_percentile(self) -> float:
         protection = self.protection_combo.currentData() or "medium"
@@ -777,15 +526,15 @@ class BackgroundStep(QWidget):
 
         return 80.0
 
-    def estimate_background_channel(self, channel: np.ndarray, block_size: int) -> np.ndarray:
-        height, width = channel.shape
+    def estimate_background(self, image: np.ndarray, block_size: int) -> np.ndarray:
+        height, width = image.shape
         block_size = max(8, int(block_size))
 
         pad_h = (block_size - height % block_size) % block_size
         pad_w = (block_size - width % block_size) % block_size
 
         padded = np.pad(
-            channel,
+            image,
             ((0, pad_h), (0, pad_w)),
             mode="edge",
         )
@@ -826,32 +575,21 @@ class BackgroundStep(QWidget):
 
         return background.astype(np.float32, copy=False)
 
-    def correct_background(self, rgb: np.ndarray) -> np.ndarray:
+    def correct_background(self, image: np.ndarray) -> np.ndarray:
         if not self.enabled_check.isChecked():
-            return rgb.copy()
+            return image.copy()
 
         strength = float(self.strength_spin.value())
         scale = int(self.scale_spin.value())
 
-        corrected = np.zeros_like(rgb, dtype=np.float32)
+        background = self.estimate_background(image, scale)
+        variation = background - float(np.nanmedian(background))
+        corrected = image - strength * variation
 
-        for channel_index in range(3):
-            channel = rgb[:, :, channel_index]
-            background = self.estimate_background_channel(channel, scale)
-            variation = background - float(np.nanmedian(background))
-            corrected[:, :, channel_index] = channel - strength * variation
-
-        corrected = np.clip(corrected, 0, 1)
-
-        max_value = float(np.nanmax(corrected)) if np.any(np.isfinite(corrected)) else 0.0
-
-        if max_value > 0:
-            corrected = corrected / max_value
-
-        return np.clip(corrected, 0, 1)
+        return np.clip(corrected, 0, 1).astype(np.float32, copy=False)
 
     def recompute_preview(self):
-        original = self.composite_rgb()
+        original = self.composite_grayscale()
         self.preview_original = original
 
         if original is None:
@@ -894,7 +632,7 @@ class BackgroundStep(QWidget):
             self.preview_info.setText("No compatible selected object bands are available for background preview.")
             return
 
-        qimage = self.rgb_to_qimage(image)
+        qimage = self.gray_to_qimage(image)
         pixmap = QPixmap.fromImage(qimage)
 
         self.preview_scene.clear()
@@ -908,16 +646,16 @@ class BackgroundStep(QWidget):
 
         self.preview_info.setText(
             f"Background correction: {state} | Mode: {mode} | View: {view} | Protection: {protection} | "
-            f"Bands: {', '.join(sort_bands_recommended(self.band_arrays.keys()))} | Channels: {getattr(self, '_last_color_debug', '')}"
+            f"Bands: {', '.join(sort_bands_recommended(self.band_arrays.keys()))}"
         )
 
         self.fit_preview()
 
-    def rgb_to_qimage(self, rgb: np.ndarray) -> QImage:
-        image8 = (np.clip(rgb, 0, 1) * 255).astype(np.uint8)
+    def gray_to_qimage(self, image: np.ndarray) -> QImage:
+        image8 = (np.clip(image, 0, 1) * 255).astype(np.uint8)
         image8 = np.ascontiguousarray(image8)
 
-        height, width, channels = image8.shape
+        height, width = image8.shape
         bytes_per_line = image8.strides[0]
 
         return QImage(
@@ -925,7 +663,7 @@ class BackgroundStep(QWidget):
             width,
             height,
             bytes_per_line,
-            QImage.Format_RGB888,
+            QImage.Format_Grayscale8,
         ).copy()
 
     def fit_preview(self):
@@ -946,6 +684,7 @@ class BackgroundStep(QWidget):
             "preview": self.view_combo.currentData() or "corrected",
             "strength": float(self.strength_spin.value()),
             "scale": int(self.scale_spin.value()),
+            "preview_rendering": "grayscale",
         }
 
         project.output_options["background_correction"] = settings

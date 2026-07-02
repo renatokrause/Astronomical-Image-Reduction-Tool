@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QListWidget,
     QListWidgetItem,
+    QAbstractItemView,
 )
 
 from airt.project.recent import load_recent_projects
@@ -146,15 +147,16 @@ class WelcomeStep(QWidget):
         recent_title = QLabel("Recent projects")
         recent_title.setObjectName("sectionTitle")
         recent_title.setMinimumHeight(34)
+
         root.addWidget(recent_title)
 
         self.recent_card = QFrame()
         self.recent_card.setObjectName("emptyCard")
-        self.recent_card.setMinimumHeight(390)
-        self.recent_card.setMaximumHeight(430)
+        self.recent_card.setFixedHeight(360)
 
         recent_layout = QVBoxLayout(self.recent_card)
         recent_layout.setContentsMargins(18, 14, 18, 14)
+        recent_layout.setSpacing(8)
 
         self.no_recent_label = QLabel("No recent projects\nYour recently opened projects will appear here.")
         self.no_recent_label.setObjectName("mutedText")
@@ -162,13 +164,15 @@ class WelcomeStep(QWidget):
         self.no_recent_label.setWordWrap(True)
 
         self.recent_list = QListWidget()
-        self.recent_list.setMinimumHeight(330)
-        self.recent_list.setMaximumHeight(360)
+        self.recent_list.setFixedHeight(315)
+        self.recent_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.recent_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.recent_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.recent_list.setVisible(False)
         self.recent_list.itemDoubleClicked.connect(self.open_recent_project)
 
-        recent_layout.addWidget(self.no_recent_label)
-        recent_layout.addWidget(self.recent_list)
+        recent_layout.addWidget(self.no_recent_label, 1)
+        recent_layout.addWidget(self.recent_list, 0)
 
         root.addWidget(self.recent_card)
 
@@ -189,7 +193,12 @@ class WelcomeStep(QWidget):
         info_pixmap = QPixmap(str(icons / "info.png"))
         if not info_pixmap.isNull():
             info_icon.setPixmap(
-                info_pixmap.scaled(30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                info_pixmap.scaled(
+                    30,
+                    30,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
             )
 
         info_text = QLabel(
@@ -211,27 +220,25 @@ class WelcomeStep(QWidget):
 
     def refresh_recent_projects(self):
         projects = load_recent_projects()
-
         self.recent_list.clear()
 
         if not projects:
-            self.recent_list.setMinimumHeight(330)
-        self.recent_list.setMaximumHeight(360)
-        self.recent_list.setVisible(False)
+            self.recent_list.setVisible(False)
             self.no_recent_label.setVisible(True)
             return
 
         self.no_recent_label.setVisible(False)
         self.recent_list.setVisible(True)
 
-        for project in projects:
+        for project in projects[:5]:
             item = QListWidgetItem(f"{project['name']}\n{project['path']}")
-            item.setSizeHint(QSize(0, 62))
             item.setData(Qt.UserRole, project["path"])
+            item.setSizeHint(QSize(0, 58))
             self.recent_list.addItem(item)
 
     def open_recent_project(self, item: QListWidgetItem):
         path = item.data(Qt.UserRole)
+
         if path:
             self.wizard.open_project_path(path)
 
