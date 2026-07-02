@@ -136,10 +136,6 @@ class AlignmentStep(QWidget):
         self.y_spin.setSingleStep(0.5)
         self.y_spin.valueChanged.connect(self.on_offset_spin_changed)
 
-        self.step_combo = QComboBox()
-        for value in [0.25, 0.5, 1.0, 2.0, 5.0, 10.0]:
-            self.step_combo.addItem(f"{value:g} px", value)
-        self.step_combo.setCurrentIndex(2)
 
         control_grid.addWidget(control_title, 0, 0, 1, 6)
 
@@ -149,8 +145,6 @@ class AlignmentStep(QWidget):
         control_grid.addWidget(QLabel("Band to adjust"), 1, 2)
         control_grid.addWidget(self.adjust_band_combo, 1, 3)
 
-        control_grid.addWidget(QLabel("Step size"), 1, 4)
-        control_grid.addWidget(self.step_combo, 1, 5)
 
         control_grid.addWidget(QLabel("X offset"), 2, 0)
         control_grid.addWidget(self.x_spin, 2, 1)
@@ -269,7 +263,7 @@ class AlignmentStep(QWidget):
         self.load_preview_data()
         self.load_settings_from_project()
         self.populate_controls()
-        self.update_preview()
+        self.update_preview(preserve_view=False)
 
     def on_leave(self, target_index: int):
         self.persist_settings()
@@ -293,7 +287,7 @@ class AlignmentStep(QWidget):
         super().keyPressEvent(event)
 
     def step_size(self) -> float:
-        return float(self.step_combo.currentData() or 1.0)
+        return 1.0
 
     def selected_object_files_by_band(self) -> dict[str, list[str]]:
         project = self.wizard.project
@@ -476,7 +470,7 @@ class AlignmentStep(QWidget):
 
         self.update_offset_spins()
         self.populate_summary()
-        self.update_preview()
+        self.update_preview(preserve_view=True)
         self.persist_settings()
 
     def on_adjust_band_changed(self):
@@ -522,7 +516,7 @@ class AlignmentStep(QWidget):
             }
 
         self.populate_summary()
-        self.update_preview()
+        self.update_preview(preserve_view=True)
         self.persist_settings()
 
     def move_current_band(self, dx: float, dy: float):
@@ -541,7 +535,7 @@ class AlignmentStep(QWidget):
 
         self.update_offset_spins()
         self.populate_summary()
-        self.update_preview()
+        self.update_preview(preserve_view=True)
         self.persist_settings()
         self.setFocus()
 
@@ -554,7 +548,7 @@ class AlignmentStep(QWidget):
 
         self.update_offset_spins()
         self.populate_summary()
-        self.update_preview()
+        self.update_preview(preserve_view=True)
         self.persist_settings()
 
     def reset_all_bands(self):
@@ -563,24 +557,46 @@ class AlignmentStep(QWidget):
 
         self.update_offset_spins()
         self.populate_summary()
-        self.update_preview()
+        self.update_preview(preserve_view=True)
         self.persist_settings()
+
+    def estimate_shift_fft(self, reference: np.ndarray, moving: np.ndarray) -> tuple[float, float]:
+        ref = reference.astype(np.float32, copy=False)
+        mov = moving.astype(np.float32, copy=False)
+
+        ref = ref - float(np.nanmean(ref))
+        mov = mov - float(np.nanmean(mov))
+
+        ref[~np.isfinite(ref)] = 0
+        mov[~np.isfinite(mov)] = 0
+
+        ref_fft = np.fft.fft2(ref)
+        mov_fft = np.fft.fft2(mov)
+
+        cross_power = ref_fft * np.conj(mov_fft)
+        denominator = np.abs(cross_power)
+        denominator[denominator == 0] = 1e-12
+        cross_power = cross_power / denominator
+
+        correlation = np.fft.ifft2(cross_power).real
+        max_position = np.unravel_index(np.argmax(correlation), correlation.shape)
+
+        shifts = np.array(max_position, dtype=np.float64)
+        shape = np.array(reference.shape, dtype=np.float64)
+        midpoint = np.fix(shape / 2)
+
+        shifts[shifts > midpoint] -= shape[shifts > midpoint]
+
+        y_shift = float(shifts[0])
+        x_shift = float(shifts[1])
+
+        return x_shift, y_shift
 
     def auto_align(self):
         reference_band = self.current_reference_band()
 
         if not reference_band or reference_band not in self.band_arrays:
             QMessageBox.information(self, "No reference band", "Select a valid reference band first.")
-            return
-
-        try:
-            from skimage.registration import phase_cross_correlation
-        except Exception:
-            QMessageBox.warning(
-                self,
-                "Auto alignment unavailable",
-                "scikit-image phase_cross_correlation is unavailable.",
-            )
             return
 
         reference = self.band_arrays[reference_band]
@@ -594,18 +610,30 @@ class AlignmentStep(QWidget):
                 continue
 
             try:
-                shift, error, _ = phase_cross_correlation(reference, image, upsample_factor=10)
+                try:
+                    from skimage.registration import phase_cross_correlation
+
+                    shift, error, _ = phase_cross_correlation(
+                        reference,
+                        image,
+                        upsample_factor=10,
+                    )
+
+                    x_shift = float(shift[1])
+                    y_shift = float(shift[0])
+                except Exception:
+                    x_shift, y_shift = self.estimate_shift_fft(reference, image)
+
+                self.band_offsets[band] = {
+                    "x": x_shift,
+                    "y": y_shift,
+                }
             except Exception:
                 continue
 
-            self.band_offsets[band] = {
-                "x": float(shift[1]),
-                "y": float(shift[0]),
-            }
-
         self.update_offset_spins()
         self.populate_summary()
-        self.update_preview()
+        self.update_preview(preserve_view=True)
         self.persist_settings()
         self.wizard.footer.set_status("Automatic band alignment offsets estimated.")
 
@@ -692,7 +720,11 @@ class AlignmentStep(QWidget):
             QImage.Format_RGB888,
         ).copy()
 
-    def update_preview(self):
+    def update_preview(self, preserve_view: bool = False):
+        old_transform = self.preview_view.transform()
+        old_h_scroll = self.preview_view.horizontalScrollBar().value()
+        old_v_scroll = self.preview_view.verticalScrollBar().value()
+
         rgb = self.composite_rgb()
 
         if rgb is None:
@@ -719,7 +751,12 @@ class AlignmentStep(QWidget):
             f"Bands in preview: {', '.join(self.display_band(band) for band in sort_bands_recommended(self.band_arrays))}"
         )
 
-        self.fit_preview()
+        if preserve_view:
+            self.preview_view.setTransform(old_transform)
+            self.preview_view.horizontalScrollBar().setValue(old_h_scroll)
+            self.preview_view.verticalScrollBar().setValue(old_v_scroll)
+        else:
+            self.fit_preview()
 
     def fit_preview(self):
         if not self.current_pixmap_item:

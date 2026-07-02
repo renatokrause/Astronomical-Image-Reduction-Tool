@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from airt.qt.widgets.fits_preview_dialog import FitsPreviewDialog
 from airt.project import autosave_project
+from airt.core.bands import band_display_label, sort_bands_recommended
 
 
 class FrameReviewStep(QWidget):
@@ -141,7 +142,7 @@ class FrameReviewStep(QWidget):
         return kind.upper()
 
     def display_band(self, band: str) -> str:
-        return "None" if band == "-" else band
+        return band_display_label(band)
 
     def load_from_scan_result(self):
         result = getattr(self.wizard, "scan_result", None)
@@ -216,7 +217,8 @@ class FrameReviewStep(QWidget):
         self.band_filter.clear()
         self.band_filter.addItem("All", "")
 
-        bands = sorted({item.band for item in self.all_files})
+        bands = sort_bands_recommended({item.band for item in self.all_files})
+
         for band in bands:
             self.band_filter.addItem(self.display_band(band), band)
 
