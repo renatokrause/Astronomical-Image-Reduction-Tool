@@ -485,7 +485,7 @@ class BackgroundStep(QWidget):
         except Exception:
             return np.roll(image, shift=(int(round(y)), int(round(x))), axis=(0, 1))
 
-    def color_mapping_for_bands(self) -> dict[str, str]:
+    def color_mapping_for_bands(self) -> dict[str, dict[str, str]]:
         project = self.wizard.project
         bands = sort_bands_recommended(self.band_arrays.keys())
 
@@ -528,9 +528,42 @@ class BackgroundStep(QWidget):
                     break
 
             item = direct or normalized_match or {}
-            result[band] = item.get("hex_color", "#808080")
+
+            result[band] = {
+                "hex_color": item.get("hex_color", "#808080"),
+                "channel": item.get("channel", "-"),
+            }
 
         return result
+
+    def channel_to_rgb_weight(self, channel: str, hex_color: str) -> tuple[float, float, float]:
+        channel = (channel or "-").upper().strip()
+
+        if channel == "R":
+            return (1.0, 0.0, 0.0)
+
+        if channel == "G":
+            return (0.0, 1.0, 0.0)
+
+        if channel == "B":
+            return (0.0, 0.0, 1.0)
+
+        if channel == "R+G":
+            return (1.0, 1.0, 0.0)
+
+        if channel == "R+B":
+            return (1.0, 0.0, 1.0)
+
+        if channel == "G+B":
+            return (0.0, 1.0, 1.0)
+
+        if channel == "R+G+B":
+            return (1.0, 1.0, 1.0)
+
+        if channel == "L":
+            return (0.0, 0.0, 0.0)
+
+        return self.hex_to_rgb(hex_color)
 
     def hex_to_rgb(self, hex_color: str) -> tuple[float, float, float]:
         value = (hex_color or "#808080").strip().lstrip("#")
@@ -555,8 +588,11 @@ class BackgroundStep(QWidget):
 
         height, width = next(iter(shapes))
         rgb = np.zeros((height, width, 3), dtype=np.float32)
+        chroma_count = 0
 
-        colors = self.color_mapping_for_bands()
+        luminance = None
+
+        mapping = self.color_mapping_for_bands()
         offsets = self.alignment_offsets()
 
         for band in sort_bands_recommended(self.band_arrays.keys()):
@@ -569,16 +605,53 @@ class BackgroundStep(QWidget):
                 float(offset.get("y", 0.0)),
             )
 
-            color = self.hex_to_rgb(colors.get(band, "#808080"))
+            item = mapping.get(band, {})
+            hex_color = item.get("hex_color", "#808080")
+            channel = item.get("channel", "-")
+
+            normalized_band = normalize_band_name(band)
+
+            if channel == "L" or normalized_band == "L":
+                luminance = shifted if luminance is None else np.maximum(luminance, shifted)
+                continue
+
+            color = self.channel_to_rgb_weight(channel, hex_color)
+
+            if color == (0.0, 0.0, 0.0):
+                continue
 
             rgb[:, :, 0] += shifted * color[0]
             rgb[:, :, 1] += shifted * color[1]
             rgb[:, :, 2] += shifted * color[2]
+            chroma_count += 1
+
+        if chroma_count == 0:
+            if luminance is None:
+                return None
+
+            gray = np.clip(luminance, 0, 1)
+            return np.dstack([gray, gray, gray]).astype(np.float32, copy=False)
 
         max_value = float(np.nanmax(rgb)) if np.any(np.isfinite(rgb)) else 0.0
 
         if max_value > 0:
             rgb = rgb / max_value
+
+        rgb = np.clip(rgb, 0, 1)
+
+        if luminance is not None:
+            luminance = np.clip(luminance, 0, 1)
+
+            max_channel = np.max(rgb, axis=2, keepdims=True)
+            hue = np.divide(
+                rgb,
+                np.maximum(max_channel, 1e-6),
+                out=np.zeros_like(rgb),
+                where=max_channel > 1e-6,
+            )
+
+            grayscale_l = np.dstack([luminance, luminance, luminance])
+            rgb = np.where(max_channel > 1e-6, hue * luminance[:, :, None], grayscale_l)
 
         return np.clip(rgb, 0, 1)
 
