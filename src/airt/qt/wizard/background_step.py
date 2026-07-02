@@ -558,11 +558,9 @@ class BackgroundStep(QWidget):
         normalized = normalize_band_name(band)
         channel = (mapping_item.get("channel") or self.default_channel_for_band(band)).upper().strip()
 
-        # Luminance is handled separately.
         if normalized == "L" or channel == "L":
             return (0.0, 0.0, 0.0)
 
-        # Prefer explicit channels saved by screen 5.
         if channel == "R":
             return (1.0, 0.0, 0.0)
 
@@ -584,7 +582,6 @@ class BackgroundStep(QWidget):
         if channel == "R+G+B":
             return (1.0, 1.0, 1.0)
 
-        # Fallback by normalized astronomical band.
         if normalized in {"R", "HA", "SII", "I"}:
             return (1.0, 0.0, 0.0)
 
@@ -604,14 +601,10 @@ class BackgroundStep(QWidget):
 
         valid = channel[finite]
 
-        low, high = np.percentile(valid, [0.5, 99.7])
+        low, high = np.percentile(valid, [1.0, 99.7])
 
         if high <= low:
-            low, high = np.percentile(valid, [1.0, 99.5])
-
-        if high <= low:
-            low = float(np.min(valid))
-            high = float(np.max(valid))
+            low, high = np.percentile(valid, [2.0, 99.5])
 
         if high <= low:
             return np.zeros_like(channel, dtype=np.float32)
@@ -620,20 +613,19 @@ class BackgroundStep(QWidget):
         stretched = np.clip(stretched, 0, 1)
         stretched[~finite] = 0
 
-        # Gentle non-linear screen stretch, closer to final preview behavior.
+        # Preview stretch. This is visual only.
         stretched = np.sqrt(stretched)
 
         return stretched.astype(np.float32, copy=False)
 
     def neutralize_preview_background(self, rgb: np.ndarray) -> np.ndarray:
-        # Estimate sky from darker pixels and equalize channel medians.
-        luminance = np.median(rgb, axis=2)
+        luminance = np.mean(rgb, axis=2)
         finite = np.isfinite(luminance)
 
         if not np.any(finite):
             return rgb
 
-        threshold = np.percentile(luminance[finite], 60)
+        threshold = np.percentile(luminance[finite], 55)
         sky_mask = finite & (luminance <= threshold)
 
         if not np.any(sky_mask):
@@ -648,21 +640,25 @@ class BackgroundStep(QWidget):
             dtype=np.float32,
         )
 
-        target = float(np.median(medians[medians > 0])) if np.any(medians > 0) else 0.0
+        positive = medians[medians > 0]
 
-        if target <= 0:
+        if positive.size == 0:
             return rgb
 
+        target = float(np.median(positive))
         factors = np.ones(3, dtype=np.float32)
 
         for idx in range(3):
             if medians[idx] > 0:
                 factors[idx] = target / medians[idx]
 
-        factors = np.clip(factors, 0.35, 2.8)
+        factors = np.clip(factors, 0.45, 2.2)
+        return np.clip(rgb * factors.reshape(1, 1, 3), 0, 1)
 
-        balanced = rgb * factors.reshape(1, 1, 3)
-        return np.clip(balanced, 0, 1)
+    def boost_preview_saturation(self, rgb: np.ndarray, amount: float = 1.8) -> np.ndarray:
+        gray = np.mean(rgb, axis=2, keepdims=True)
+        saturated = gray + (rgb - gray) * amount
+        return np.clip(saturated, 0, 1)
 
     def hex_to_rgb(self, hex_color: str) -> tuple[float, float, float]:
         value = (hex_color or "#808080").strip().lstrip("#")
@@ -693,7 +689,6 @@ class BackgroundStep(QWidget):
 
         mapping = self.color_mapping_for_bands()
         offsets = self.alignment_offsets()
-
         used_summary = []
 
         for band in sort_bands_recommended(self.band_arrays.keys()):
@@ -739,35 +734,37 @@ class BackgroundStep(QWidget):
             if channel_weight_sum[idx] > 0:
                 linear_rgb[:, :, idx] /= channel_weight_sum[idx]
 
-        stretched_rgb = np.zeros_like(linear_rgb, dtype=np.float32)
+        rgb = np.zeros_like(linear_rgb, dtype=np.float32)
 
         for idx in range(3):
             if channel_weight_sum[idx] > 0:
-                stretched_rgb[:, :, idx] = self.robust_stretch_channel(linear_rgb[:, :, idx])
+                rgb[:, :, idx] = self.robust_stretch_channel(linear_rgb[:, :, idx])
 
-        # If one channel is missing, keep it black. Do not copy red into missing channels,
-        # otherwise the preview becomes falsely monochrome.
-        stretched_rgb = self.neutralize_preview_background(stretched_rgb)
+        # Do not synthesize missing channels. If only R is present, the result must stay red.
+        rgb = self.neutralize_preview_background(rgb)
 
         if luminance is not None:
             luma = self.robust_stretch_channel(luminance)
+            max_channel = np.max(rgb, axis=2, keepdims=True)
 
-            max_channel = np.max(stretched_rgb, axis=2, keepdims=True)
             chroma = np.divide(
-                stretched_rgb,
+                rgb,
                 np.maximum(max_channel, 1e-6),
-                out=np.zeros_like(stretched_rgb),
+                out=np.zeros_like(rgb),
                 where=max_channel > 1e-6,
             )
 
-            stretched_rgb = np.where(
+            rgb = np.where(
                 max_channel > 1e-6,
                 chroma * luma[:, :, None],
                 np.dstack([luma, luma, luma]),
             )
 
+        # Visual preview only: make channel differences easier to inspect.
+        rgb = self.boost_preview_saturation(rgb, amount=1.8)
+
         self._last_color_debug = ", ".join(used_summary)
-        return np.clip(stretched_rgb, 0, 1)
+        return np.clip(rgb, 0, 1)
 
     def protection_percentile(self) -> float:
         protection = self.protection_combo.currentData() or "medium"

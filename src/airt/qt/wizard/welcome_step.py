@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import Qt, QRectF, QSize
 from PySide6.QtGui import QPixmap, QPainter, QColor, QPen, QPainterPath
 from PySide6.QtWidgets import (
     QWidget,
@@ -150,7 +150,8 @@ class WelcomeStep(QWidget):
 
         self.recent_card = QFrame()
         self.recent_card.setObjectName("emptyCard")
-        self.recent_card.setMinimumHeight(150)
+        self.recent_card.setMinimumHeight(390)
+        self.recent_card.setMaximumHeight(430)
 
         recent_layout = QVBoxLayout(self.recent_card)
         recent_layout.setContentsMargins(18, 14, 18, 14)
@@ -161,6 +162,8 @@ class WelcomeStep(QWidget):
         self.no_recent_label.setWordWrap(True)
 
         self.recent_list = QListWidget()
+        self.recent_list.setMinimumHeight(330)
+        self.recent_list.setMaximumHeight(360)
         self.recent_list.setVisible(False)
         self.recent_list.itemDoubleClicked.connect(self.open_recent_project)
 
@@ -212,7 +215,9 @@ class WelcomeStep(QWidget):
         self.recent_list.clear()
 
         if not projects:
-            self.recent_list.setVisible(False)
+            self.recent_list.setMinimumHeight(330)
+        self.recent_list.setMaximumHeight(360)
+        self.recent_list.setVisible(False)
             self.no_recent_label.setVisible(True)
             return
 
@@ -221,6 +226,7 @@ class WelcomeStep(QWidget):
 
         for project in projects:
             item = QListWidgetItem(f"{project['name']}\n{project['path']}")
+            item.setSizeHint(QSize(0, 62))
             item.setData(Qt.UserRole, project["path"])
             self.recent_list.addItem(item)
 
