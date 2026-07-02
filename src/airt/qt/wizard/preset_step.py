@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
 )
 
+from airt.project import autosave_project
 from airt.core.color_mapping import (
     BandColorMapping,
     build_color_mapping,
@@ -451,8 +452,26 @@ class PresetStep(QWidget):
         project.output_options["band_mapping"] = rgb_mapping
         project.update_timestamp()
 
-    def on_next(self) -> bool:
+    def persist_settings(self):
         self.save_to_project()
-        self.wizard.footer.set_status("Object preset and color mapping saved.")
+
+        project = self.wizard.project
+        if not project or not project.project_file:
+            return
+
+        try:
+            autosave_project(project)
+            if hasattr(self.wizard, "mark_project_recent"):
+                self.wizard.mark_project_recent()
+            self.wizard.footer.set_status("Object preset and color mapping saved.")
+        except Exception as exc:
+            self.wizard.footer.set_status(f"Could not autosave color mapping: {exc}")
+
+    def on_leave(self, target_index: int):
+        self.persist_settings()
+
+    def on_next(self) -> bool:
+        self.persist_settings()
         self.wizard.go_to_step(5)
         return False
+

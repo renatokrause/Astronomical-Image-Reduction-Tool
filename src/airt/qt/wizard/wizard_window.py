@@ -239,6 +239,13 @@ class WizardWindow(QMainWindow):
         if index < 0 or index >= len(self.steps):
             return
 
+        current_index = self.stack.currentIndex()
+
+        if current_index != index and 0 <= current_index < len(self.steps):
+            current_step = self.steps[current_index]
+            if hasattr(current_step, "on_leave"):
+                current_step.on_leave(index)
+
         self.stack.setCurrentIndex(index)
         self.sidebar.set_current_step(index)
 
@@ -258,3 +265,4 @@ class WizardWindow(QMainWindow):
                 return
 
         self.go_to_step(self.stack.currentIndex() + 1)
+
